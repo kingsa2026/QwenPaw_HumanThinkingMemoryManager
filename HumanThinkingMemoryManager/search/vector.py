@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 
 class BaseVectorSearcher:
@@ -61,6 +61,8 @@ class TFIDFVectorSearcher(BaseVectorSearcher):
         super().__init__(memory_manager)
         self._index: Dict[str, Dict[str, float]] = {}
         self._document_count = 0
+        self._last_index_time = 0
+        self._index_interval = 5  # 索引更新间隔（秒）
     
     def is_available(self) -> bool:
         """检查是否可用"""
@@ -180,8 +182,13 @@ class TFIDFVectorSearcher(BaseVectorSearcher):
         if not memories:
             return []
         
-        # 构建索引
-        self._build_index(memories)
+        # 检查是否需要更新索引
+        import time
+        current_time = time.time()
+        if current_time - self._last_index_time > self._index_interval or not self._index:
+            # 构建索引
+            self._build_index(memories)
+            self._last_index_time = current_time
         
         # 查询向量化
         query_tokens = self._tokenize(query)
@@ -189,7 +196,7 @@ class TFIDFVectorSearcher(BaseVectorSearcher):
         
         # 计算相似度，加入时间因素和搜索频率
         similarities = []
-        current_time = datetime.now()
+        current_datetime = datetime.now()
         
         for memory in memories:
             # 计算文本相似度
@@ -204,7 +211,7 @@ class TFIDFVectorSearcher(BaseVectorSearcher):
             if memory.get("created_at"):
                 try:
                     memory_time = datetime.fromisoformat(memory["created_at"])
-                    time_diff = (current_time - memory_time).total_seconds() / 3600  # 小时
+                    time_diff = (current_datetime - memory_time).total_seconds() / 3600  # 小时
                     # 时间衰减函数：1/(1+time_diff/24)，24小时后权重降为0.5
                     time_weight = 1 / (1 + time_diff / 24)
                 except:
@@ -224,15 +231,23 @@ class TFIDFVectorSearcher(BaseVectorSearcher):
         # 排序
         similarities.sort(key=lambda x: x[1], reverse=True)
         
+        # 批量更新搜索频率和分数
+        memory_ids = []
+        scores = []
+        
         # 返回结果
         results = []
         for memory, sim in similarities[:max_results]:
             memory["similarity"] = sim
             # 记录搜索频率并更新权重
             if 'id' in memory:
-                # 更新搜索频率和分数
-                self.db.update_memory_search(memory["id"], sim)
+                memory_ids.append(memory["id"])
+                scores.append(sim)
             results.append(memory)
+        
+        # 批量更新
+        if memory_ids:
+            self.db.batch_update_memory_search(memory_ids, scores)
         
         return results
 

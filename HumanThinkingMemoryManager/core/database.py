@@ -10,7 +10,7 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 
 # 数据库版本
 CURRENT_DB_VERSION = "3.0.0"
@@ -425,6 +425,31 @@ class HumanThinkingMemoryDB:
                 """,
                 (similarity, similarity, memory_id)
             )
+
+    def batch_update_memory_search(self, memory_ids: List[int], scores: List[float]):
+        """批量更新记忆搜索信息
+
+        Args:
+            memory_ids: 记忆ID列表
+            scores: 相似度分数列表
+        """
+        if not memory_ids or not scores or len(memory_ids) != len(scores):
+            return
+        
+        with self._transaction():
+            # 批量更新，减少数据库操作次数
+            for memory_id, score in zip(memory_ids, scores):
+                self.cursor.execute(
+                    """
+                    UPDATE qwenpaw_memory
+                    SET search_count = search_count + 1,
+                        search_score = search_score + ?,
+                        importance_score = importance_score + (? * 0.1),
+                        last_searched_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (score, score, memory_id)
+                )
 
     def freeze_memory(self, memory_id: int) -> bool:
         """冷藏记忆"""

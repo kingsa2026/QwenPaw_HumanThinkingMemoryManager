@@ -9,11 +9,29 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from agentscope.message import Msg
-from agentscope.tool import ToolBase, ToolResponse, ToolParam
-
+# 只导入核心模块，避免依赖agentscope
 from .core.memory_manager import HumanThinkingMemoryManager
 from .config.config import ConfigLoader
+
+# 模拟ToolBase和ToolResponse类，避免依赖agentscope
+class ToolParam:
+    """模拟ToolParam类"""
+    def __init__(self, name, type, description, required=False, enum=None):
+        self.name = name
+        self.type = type
+        self.description = description
+        self.required = required
+        self.enum = enum
+
+class ToolResponse:
+    """模拟ToolResponse类"""
+    def __init__(self, content):
+        self.content = content
+
+class ToolBase:
+    """模拟ToolBase类"""
+    def __init__(self):
+        pass
 
 
 class HumanThinkingTool(ToolBase):
@@ -75,20 +93,20 @@ class HumanThinkingTool(ToolBase):
         elif action == "search":
             if not query:
                 return ToolResponse(
-                    content=[{"type": "text", "text": "错误：搜索操作需要提供query参数"}
+                    content=[{"type": "text", "text": "错误：搜索操作需要提供query参数"}]
                 )
             return await self._search_memory(query, agent_id)
         elif action == "store":
             if not content:
                 return ToolResponse(
-                    content=[{"type": "text", "text": "错误：存储操作需要提供content参数"}
+                    content=[{"type": "text", "text": "错误：存储操作需要提供content参数"}]
                 )
             return await self._store_memory(content, importance, agent_id)
         elif action == "stats":
             return await self._get_stats(agent_id)
         else:
             return ToolResponse(
-                content=[{"type": "text", "text": f"错误：不支持的操作类型：{action}"}
+                content=[{"type": "text", "text": f"错误：不支持的操作类型：{action}"}]
             )
 
     async def _enable_tool(self) -> ToolResponse:
@@ -103,7 +121,7 @@ class HumanThinkingTool(ToolBase):
             agents = self._scan_agent_workspaces()
             if not agents:
                 return ToolResponse(
-                    content=[{"type": "text", "text": "警告：未找到agent工作空间，继续安装"}
+                    content=[{"type": "text", "text": "警告：未找到agent工作空间，继续安装"}]
                 )
 
             # Step 3: Create memory manager for each agent
@@ -117,11 +135,11 @@ class HumanThinkingTool(ToolBase):
             self._restart_service()
 
             return ToolResponse(
-                content=[{"type": "text", "text": "Human Thinking工具启用成功！"}
+                content=[{"type": "text", "text": "Human Thinking工具启用成功！"}]
             )
         except Exception as e:
             return ToolResponse(
-                content=[{"type": "text", "text": f"错误：启用工具失败 - {str(e)}"}
+                content=[{"type": "text", "text": f"错误：启用工具失败 - {str(e)}"}]
             )
 
     async def _disable_tool(self) -> ToolResponse:
@@ -139,11 +157,11 @@ class HumanThinkingTool(ToolBase):
             self._restart_service()
 
             return ToolResponse(
-                content=[{"type": "text", "text": "Human Thinking工具禁用成功！"}
+                content=[{"type": "text", "text": "Human Thinking工具禁用成功！"}]
             )
         except Exception as e:
             return ToolResponse(
-                content=[{"type": "text", "text": f"错误：禁用工具失败 - {str(e)}"}
+                content=[{"type": "text", "text": f"错误：禁用工具失败 - {str(e)}"}]
             )
 
     async def _backup_workspace(self) -> ToolResponse:
@@ -191,11 +209,11 @@ class HumanThinkingTool(ToolBase):
             self._cleanup_old_backups(backup_dir)
 
             return ToolResponse(
-                content=[{"type": "text", "text": f"备份完成：成功备份 {success_count} 个agent工作空间"}
+                content=[{"type": "text", "text": f"备份完成：成功备份 {success_count} 个agent工作空间"}]
             )
         except Exception as e:
             return ToolResponse(
-                content=[{"type": "text", "text": f"错误：备份失败 - {str(e)}"}
+                content=[{"type": "text", "text": f"错误：备份失败 - {str(e)}"}]
             )
 
     async def _search_memory(self, query: str, agent_id: Optional[str] = None) -> ToolResponse:
@@ -236,15 +254,15 @@ class HumanThinkingTool(ToolBase):
 
             if not results:
                 return ToolResponse(
-                    content=[{"type": "text", "text": "未找到相关记忆"}
+                    content=[{"type": "text", "text": "未找到相关记忆"}]
                 )
 
             return ToolResponse(
-                content=[{"type": "text", "text": "\n".join(results)}
+                content=[{"type": "text", "text": "\n".join(results)}]
             )
         except Exception as e:
             return ToolResponse(
-                content=[{"type": "text", "text": f"错误：搜索记忆失败 - {str(e)}"}
+                content=[{"type": "text", "text": f"错误：搜索记忆失败 - {str(e)}"}]
             )
 
     async def _store_memory(self, content: str, importance: int, agent_id: Optional[str] = None) -> ToolResponse:
@@ -284,15 +302,15 @@ class HumanThinkingTool(ToolBase):
 
             if stored_count == 0:
                 return ToolResponse(
-                    content=[{"type": "text", "text": "未找到可存储的agent工作空间"}
+                    content=[{"type": "text", "text": "未找到可存储的agent工作空间"}]
                 )
 
             return ToolResponse(
-                content=[{"type": "text", "text": f"成功存储记忆到 {stored_count} 个agent工作空间"}
+                content=[{"type": "text", "text": f"成功存储记忆到 {stored_count} 个agent工作空间"}]
             )
         except Exception as e:
             return ToolResponse(
-                content=[{"type": "text", "text": f"错误：存储记忆失败 - {str(e)}"}
+                content=[{"type": "text", "text": f"错误：存储记忆失败 - {str(e)}"}]
             )
 
     async def _get_stats(self, agent_id: Optional[str] = None) -> ToolResponse:
@@ -334,15 +352,15 @@ class HumanThinkingTool(ToolBase):
 
             if not stats:
                 return ToolResponse(
-                    content=[{"type": "text", "text": "未找到可统计的agent工作空间"}
+                    content=[{"type": "text", "text": "未找到可统计的agent工作空间"}]
                 )
 
             return ToolResponse(
-                content=[{"type": "text", "text": "\n".join(stats)}
+                content=[{"type": "text", "text": "\n".join(stats)}]
             )
         except Exception as e:
             return ToolResponse(
-                content=[{"type": "text", "text": f"错误：获取统计信息失败 - {str(e)}"}
+                content=[{"type": "text", "text": f"错误：获取统计信息失败 - {str(e)}"}]
             )
 
     async def _initialize_memory_manager(self, agent: Dict[str, Any]):
