@@ -4,6 +4,7 @@ import logging
 import platform
 import sys
 from pathlib import Path
+from datetime import datetime
 from typing import Optional, Dict, Any
 
 # 模拟必要的类，避免依赖agentscope
@@ -202,10 +203,13 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         self.summary_toolkit.register_tool_function(write_file)
         self.summary_toolkit.register_tool_function(edit_file)
 
-        # 内存缓存
+        # 内存缓存 - 每个agent一个缓存池
         self._memory_cache = []
-        self.batch_threshold = 10  # 批量写入阈值
+        self.batch_threshold = 10  # 批量写入阈值（按条数）
+        self.max_cache_size = 100000  # 最大缓存大小（按字符数）
         self._force_flush = False  # 强制刷新标志
+        self.last_activity_time = datetime.now()  # 最后活动时间
+        self.inactivity_timeout = 300  # 无活动超时时间（秒）
 
         # 生命周期状态
         self._started: bool = False
@@ -481,6 +485,9 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
             )
 
         try:
+            # Update last activity time
+            self.last_activity_time = datetime.now()
+            
             # 延迟初始化组件
             self._lazy_init_components()
             
@@ -546,7 +553,7 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
     async def store_memory(self, content: str, source_id: str = "system",
                          session_id: Optional[str] = None, importance: int = 3,
                          metadata: Optional[dict] = None) -> int:
-        """Store a new memory (supports batch processing).
+        """Store a new memory (supports batch processing with memory limits).
 
         Args:
             content: Memory content.
@@ -561,6 +568,9 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         if not self._started:
             raise RuntimeError("Memory Manager not started")
 
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+
         # Create memory object
         memory = {
             "content": content,
@@ -574,12 +584,33 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         # Add to memory cache
         self._memory_cache.append(memory)
 
-        # Check if we need to batch write
-        if len(self._memory_cache) >= self.batch_threshold or self._force_flush:
+        # Check if we need to batch write based on count
+        if len(self._memory_cache) >= self.batch_threshold:
+            await self._flush_cache()
+        # Check if we need to batch write based on size
+        elif self._get_cache_size() >= self.max_cache_size:
+            await self._flush_cache()
+        # Check if we need to batch write based on inactivity
+        elif await self._check_inactivity():
             await self._flush_cache()
 
         # Return temporary ID, actual ID will be generated during batch write
         return id(memory)
+
+    def _get_cache_size(self) -> int:
+        """Calculate the size of the memory cache in characters."""
+        total_size = 0
+        for memory in self._memory_cache:
+            total_size += len(memory.get('content', ''))
+            if memory.get('metadata'):
+                total_size += len(str(memory['metadata']))
+        return total_size
+
+    async def _check_inactivity(self) -> bool:
+        """Check if the agent has been inactive for a certain period."""
+        current_time = datetime.now()
+        time_diff = (current_time - self.last_activity_time).total_seconds()
+        return time_diff >= self.inactivity_timeout
 
     async def _flush_cache(self):
         """Batch write memories from cache to database."""
@@ -629,6 +660,9 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         if not self._started:
             raise RuntimeError("Memory Manager not started")
 
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
         # 延迟初始化组件
         self._lazy_init_components()
         
@@ -646,6 +680,9 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         if not self._started:
             raise RuntimeError("Memory Manager not started")
 
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
         # 延迟初始化组件
         self._lazy_init_components()
         
