@@ -121,7 +121,7 @@ Human Thinking Memory Manager 使用 SQLite 数据库存储记忆，数据库结
 
 1. 下载一键安装脚本：
    ```bash
-   wget -O install_human_thinking.sh https://raw.githubusercontent.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/main/install_from_github.sh
+   wget -O install_human_thinking.sh https://raw.githubusercontent.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/main/install.sh
    ```
 
 2. 赋予执行权限：
@@ -141,9 +141,10 @@ Human Thinking Memory Manager 使用 SQLite 数据库存储记忆，数据库结
    git clone https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager.git
    ```
 
-2. 将 `HumanThinkingMemoryManager` 文件夹复制到 QwenPaw 的 `src/qwenpaw/agents/tools/` 目录下：
+2. 将所有文件复制到 QwenPaw 的 `src/qwenpaw/agents/tools/HumanThinkingMemoryManager/` 目录下：
    ```bash
-   cp -r HumanThinkingMemoryManager /path/to/QwenPaw/src/qwenpaw/agents/tools/
+   mkdir -p /path/to/QwenPaw/src/qwenpaw/agents/tools/HumanThinkingMemoryManager
+   cp -r QwenPaw_HumanThinkingMemoryManager/* /path/to/QwenPaw/src/qwenpaw/agents/tools/HumanThinkingMemoryManager/
    ```
 
 3. 运行安装脚本：
