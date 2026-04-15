@@ -47,7 +47,7 @@ _ensure_qwenpaw_path()
 
 # 动态导入子模块
 from .database import HumanThinkingMemoryDB
-from ..search.vector import VectorSearch, FallbackVectorSearch
+from ..search.vector import VectorSearcher
 from ..hooks.memory_hooks import MemoryRetrievalHook, MemoryWriteHook, MemoryFreezerHook
 from ..utils.migrator import MemoryMigrator
 from ..utils.version import VersionManager
@@ -90,8 +90,7 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         self.db: Optional[HumanThinkingMemoryDB] = None
 
         # 初始化搜索引擎
-        self.vector_search: Optional[VectorSearch] = None
-        self.fallback_vector_search: Optional[FallbackVectorSearch] = None
+        self.vector_searcher: Optional[VectorSearcher] = None
 
         # 初始化钩子
         self.retrieval_hook: Optional[MemoryRetrievalHook] = None
@@ -239,10 +238,8 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
             f"Embedding config: {log_cfg}, vector_enabled={vector_enabled}",
         )
 
-        if vector_enabled:
-            self.vector_search = VectorSearch(self.db, self.agent_id)
-        else:
-            self.fallback_vector_search = FallbackVectorSearch(self.db, self.agent_id)
+        # 初始化向量搜索器
+        self.vector_searcher = VectorSearcher(self, backend="tfidf", cache_enabled=True)
 
         # 4. 初始化钩子
         self.retrieval_hook = MemoryRetrievalHook(self.db, self.agent_id)
@@ -373,18 +370,12 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
 
         try:
             # 执行搜索
-            if self.vector_search:
-                results = self.vector_search.search_similar(
-                    query_text=query,
-                    top_k=max_results,
-                    min_score=min_score,
-                )
-            else:
-                results = self.fallback_vector_search.search_similar(
-                    query_text=query,
-                    top_k=max_results,
-                    min_score=min_score,
-                )
+            results = await self.vector_searcher.search(
+                query=query,
+                max_results=max_results,
+                agent_id=self.agent_id,
+                include_frozen=False
+            )
 
             # 格式化结果
             if not results:
@@ -394,13 +385,13 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
 
             result_text = "【相关记忆】\n\n"
             for i, mem in enumerate(results, 1):
-                result_text += f"{i}. [{mem['timestamp']}] {mem['content']}\n"
-                result_text += f"   重要性: {mem['importance']} | 相关度: {mem.get('score', 'N/A')}\n\n"
+                result_text += f"{i}. [{mem.get('created_at', 'N/A')}] {mem['content']}\n"
+                result_text += f"   重要性: {mem['importance']} | 相关度: {mem.get('similarity', 'N/A')}\n\n"
 
             # 更新访问时间
             for mem in results:
                 if 'id' in mem:
-                    self.db.update_access_time(mem["id"])
+                    self.db.update_memory_access(mem["id"])
 
             return ToolResponse(content=[TextBlock(type="text", text=result_text)])
 
@@ -449,9 +440,7 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
             entity_type=metadata.get("entity_type") if metadata else None,
         )
 
-        # 更新向量索引
-        if self.vector_search:
-            await self.vector_search.add_embedding(memory_id, content)
+        # VectorSearcher会在搜索时自动构建索引，无需在此处手动更新
 
         return memory_id
 
