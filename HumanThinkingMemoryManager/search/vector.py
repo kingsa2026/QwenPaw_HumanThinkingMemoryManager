@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.3"
+__version__ = "1.0.5"
 
 
 class BaseVectorSearcher:
@@ -27,6 +27,7 @@ class BaseVectorSearcher:
         query: str,
         max_results: int = 5,
         agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         include_frozen: bool = False
     ) -> List[Dict[str, Any]]:
         """搜索记忆"""
@@ -35,7 +36,8 @@ class BaseVectorSearcher:
     def _get_agent_memories(
         self,
         agent_id: str,
-        include_frozen: bool = False
+        include_frozen: bool = False,
+        session_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """获取 Agent 的记忆（带过滤）"""
         if not self.db:
@@ -46,6 +48,7 @@ class BaseVectorSearcher:
             query="",  # 空查询获取所有记忆
             max_results=1000,  # 限制数量以提高性能
             agent_id=agent_id,
+            session_id=session_id,
             include_frozen=include_frozen
         )
 
@@ -159,6 +162,7 @@ class TFIDFVectorSearcher(BaseVectorSearcher):
         query: str,
         max_results: int = 5,
         agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         include_frozen: bool = False
     ) -> List[Dict[str, Any]]:
         """
@@ -168,6 +172,7 @@ class TFIDFVectorSearcher(BaseVectorSearcher):
             query: 查询文本
             max_results: 最大结果数
             agent_id: Agent ID
+            session_id: 会话ID，用于过滤特定会话的记忆
             include_frozen: 是否包含冷藏记忆
             
         Returns:
@@ -177,7 +182,7 @@ class TFIDFVectorSearcher(BaseVectorSearcher):
             agent_id = self.memory_manager.agent_id
         
         # 获取记忆
-        memories = self._get_agent_memories(agent_id, include_frozen)
+        memories = self._get_agent_memories(agent_id, include_frozen, session_id)
         
         if not memories:
             return []
@@ -364,6 +369,7 @@ class VectorSearcher:
         query: str,
         max_results: int = 5,
         agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         include_frozen: bool = False,
         use_cache: bool = True
     ) -> List[Dict[str, Any]]:
@@ -374,6 +380,7 @@ class VectorSearcher:
             query: 查询文本
             max_results: 最大结果数
             agent_id: Agent ID
+            session_id: 会话ID，用于过滤特定会话的记忆
             include_frozen: 是否包含冷藏记忆
             use_cache: 是否使用缓存
             
@@ -401,6 +408,7 @@ class VectorSearcher:
             query=query,
             max_results=max_results,
             agent_id=agent_id,
+            session_id=session_id,
             include_frozen=include_frozen
         )
         

@@ -3,6 +3,7 @@
 import logging
 import platform
 import sys
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -101,6 +102,94 @@ def load_agent_config(agent_id):
 class EnvVarLoader:
     """模拟EnvVarLoader类"""
     get_str = MockEnvVarLoader.get_str
+
+
+class SessionManager:
+    """会话管理器，负责管理不同agent的不同会话"""
+    
+    def __init__(self):
+        """初始化会话管理器"""
+        self.sessions = {}
+        self.lock = threading.RLock()  # 可重入锁
+        
+    def create_session(self, agent_id: str, session_id: str):
+        """创建新会话
+        
+        Args:
+            agent_id: Agent ID
+            session_id: Session ID
+            
+        Returns:
+            dict: 会话信息
+        """
+        key = f"{agent_id}:{session_id}"
+        with self.lock:
+            if key not in self.sessions:
+                self.sessions[key] = {
+                    'agent_id': agent_id,
+                    'session_id': session_id,
+                    'created_at': datetime.now(),
+                    'last_activity': datetime.now(),
+                    'memories': []
+                }
+            return self.sessions[key]
+            
+    def get_session(self, agent_id: str, session_id: str):
+        """获取会话
+        
+        Args:
+            agent_id: Agent ID
+            session_id: Session ID
+            
+        Returns:
+            dict: 会话信息，不存在返回None
+        """
+        key = f"{agent_id}:{session_id}"
+        with self.lock:
+            return self.sessions.get(key)
+            
+    def update_session(self, agent_id: str, session_id: str):
+        """更新会话活动时间
+        
+        Args:
+            agent_id: Agent ID
+            session_id: Session ID
+        """
+        key = f"{agent_id}:{session_id}"
+        with self.lock:
+            if key in self.sessions:
+                self.sessions[key]['last_activity'] = datetime.now()
+                
+    def cleanup_sessions(self, timeout: int = 300):
+        """清理超时会话
+        
+        Args:
+            timeout: 超时时间（秒）
+        """
+        with self.lock:
+            current_time = datetime.now()
+            expired_sessions = []
+            for key, session in self.sessions.items():
+                if (current_time - session['last_activity']).total_seconds() > timeout:
+                    expired_sessions.append(key)
+            for key in expired_sessions:
+                del self.sessions[key]
+                
+    def get_session_count(self, agent_id: str):
+        """获取指定agent的会话数量
+        
+        Args:
+            agent_id: Agent ID
+            
+        Returns:
+            int: 会话数量
+        """
+        with self.lock:
+            count = 0
+            for key in self.sessions:
+                if key.startswith(f"{agent_id}:"):
+                    count += 1
+            return count
 
 # 动态路径解析 - 确保无论模块放在哪个位置都能正确导入
 _path_resolved = False
@@ -203,6 +292,9 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         self.summary_toolkit.register_tool_function(write_file)
         self.summary_toolkit.register_tool_function(edit_file)
 
+        # 会话管理器
+        self.session_manager = SessionManager()
+        
         # 内存缓存 - 每个agent一个缓存池
         self._memory_cache = []
         self.batch_threshold = 10  # 批量写入阈值（按条数）
@@ -210,6 +302,7 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         self._force_flush = False  # 强制刷新标志
         self.last_activity_time = datetime.now()  # 最后活动时间
         self.inactivity_timeout = 300  # 无活动超时时间（秒）
+        self.cache_lock = threading.RLock()  # 缓存操作的锁
 
         # 生命周期状态
         self._started: bool = False
@@ -468,13 +561,15 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         query: str,
         max_results: int = 5,
         min_score: float = 0.1,
+        session_id: Optional[str] = None,
     ) -> ToolResponse:
-        """Search stored memories for relevant content (supports real-time cache search).
+        """Search stored memories for relevant content (supports real-time cache search and session filtering).
 
         Args:
             query: Search query string.
             max_results: Maximum number of results to return.
             min_score: Minimum relevance score.
+            session_id: Optional session ID to filter results.
 
         Returns:
             ToolResponse: Response containing search results.
@@ -488,22 +583,31 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
             # Update last activity time
             self.last_activity_time = datetime.now()
             
+            # Update session activity if session_id is provided
+            if session_id:
+                self.session_manager.update_session(self.agent_id, session_id)
+            
             # 延迟初始化组件
             self._lazy_init_components()
             
             # 先从内存缓存中搜索
             cache_results = []
-            if self._memory_cache:
-                for memory in self._memory_cache:
-                    if query.lower() in memory['content'].lower():
-                        memory['similarity'] = 0.9  # 缓存中的记忆相关性较高
-                        cache_results.append(memory)
+            with self.cache_lock:
+                if self._memory_cache:
+                    for memory in self._memory_cache:
+                        # Filter by session if session_id is provided
+                        if session_id and memory.get('session_id') != session_id:
+                            continue
+                        if query.lower() in memory['content'].lower():
+                            memory['similarity'] = 0.9  # 缓存中的记忆相关性较高
+                            cache_results.append(memory)
             
             # 从数据库中搜索
             db_results = await self.vector_searcher.search(
                 query=query,
                 max_results=max_results - len(cache_results),
                 agent_id=self.agent_id,
+                session_id=session_id,
                 include_frozen=False
             )
 
@@ -553,7 +657,7 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
     async def store_memory(self, content: str, source_id: str = "system",
                          session_id: Optional[str] = None, importance: int = 3,
                          metadata: Optional[dict] = None) -> int:
-        """Store a new memory (supports batch processing with memory limits).
+        """Store a new memory (supports batch processing with memory limits and session management).
 
         Args:
             content: Memory content.
@@ -571,18 +675,26 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         # Update last activity time
         self.last_activity_time = datetime.now()
 
-        # Create memory object
+        # Ensure session_id exists
+        session_id = session_id or f"session_{datetime.now().timestamp()}"
+        
+        # Update session activity
+        self.session_manager.update_session(self.agent_id, session_id)
+
+        # Create memory object with agent_id and session_id
         memory = {
             "content": content,
             "source_id": source_id,
-            "session_id": session_id or self.agent_id,
+            "session_id": session_id,
+            "agent_id": self.agent_id,  # Explicitly associate with agent
             "importance": importance,
             "metadata": metadata,
             "created_at": datetime.now().isoformat()
         }
 
-        # Add to memory cache
-        self._memory_cache.append(memory)
+        # Add to memory cache with thread safety
+        with self.cache_lock:
+            self._memory_cache.append(memory)
 
         # Check if we need to batch write based on count
         if len(self._memory_cache) >= self.batch_threshold:
@@ -613,14 +725,25 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         return time_diff >= self.inactivity_timeout
 
     async def _flush_cache(self):
-        """Batch write memories from cache to database."""
-        if not self._memory_cache:
-            return
+        """Batch write memories from cache to database with thread safety."""
+        # Get a copy of the cache with thread safety
+        with self.cache_lock:
+            if not self._memory_cache:
+                return
+            # Make a copy of the cache to process
+            cache_copy = self._memory_cache.copy()
+            # Clear the original cache
+            self._memory_cache.clear()
 
         try:
             # Batch insert memories
             memory_ids = []
-            for memory in self._memory_cache:
+            for memory in cache_copy:
+                # Validate agent_id to prevent cross-agent memory writing
+                if memory.get('agent_id') != self.agent_id:
+                    logger.warning(f"Memory agent_id mismatch: {memory.get('agent_id')} != {self.agent_id}, skipping")
+                    continue
+                    
                 memory_id = self.db.insert_memory(
                     content=memory["content"],
                     source_id=memory["source_id"],
@@ -631,13 +754,13 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
                 )
                 memory_ids.append(memory_id)
 
-            # Clear cache
-            self._memory_cache.clear()
             logger.info(f"Flushed {len(memory_ids)} memories to database")
 
         except Exception as e:
             logger.error(f"Error flushing memory cache: {e}")
-            # Keep cache to retry later
+            # Restore cache to retry later
+            with self.cache_lock:
+                self._memory_cache.extend(cache_copy)
 
 
     def get_stats(self) -> Dict[str, Any]:

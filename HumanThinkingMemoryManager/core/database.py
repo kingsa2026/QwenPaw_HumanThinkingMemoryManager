@@ -10,7 +10,7 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.3"
+__version__ = "1.0.5"
 
 # 数据库版本
 CURRENT_DB_VERSION = "3.0.0"
@@ -310,6 +310,7 @@ class HumanThinkingMemoryDB:
         query: str,
         max_results: int = 5,
         agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         include_frozen: bool = False
     ) -> List[Dict[str, Any]]:
         """
@@ -319,6 +320,7 @@ class HumanThinkingMemoryDB:
             query: 搜索查询
             max_results: 最大结果数
             agent_id: Agent ID（可选，默认当前）
+            session_id: 会话ID，用于过滤特定会话的记忆
             include_frozen: 是否包含冷藏记忆
 
         Returns:
@@ -340,6 +342,11 @@ class HumanThinkingMemoryDB:
         """
         
         params = [search_agent, search_pattern]
+        
+        # 添加会话过滤
+        if session_id:
+            sql += " AND session_id = ?"
+            params.append(session_id)
         
         if not include_frozen:
             sql += " AND access_frozen = 0"
