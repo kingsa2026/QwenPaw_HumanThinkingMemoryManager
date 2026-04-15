@@ -305,28 +305,52 @@ summary = await memory_manager.summary_memory(
 ```
 HumanThinkingMemoryManager/
 ├── core/              # 核心模块
-│   ├── __init__.py
-│   ├── database.py     # 数据库操作
-│   └── memory_manager.py  # 记忆管理器
+│   ├── __init__.py    # 模块初始化
+│   ├── database.py    # 数据库操作，包含SQLite数据库的创建、查询和管理
+│   └── memory_manager.py  # 记忆管理器，实现记忆的存储、搜索和管理
 ├── search/            # 搜索模块
-│   ├── __init__.py
-│   └── vector.py      # 向量搜索
+│   ├── __init__.py    # 模块初始化
+│   └── vector.py      # 向量搜索，实现基于TF-IDF的文本相似度搜索
 ├── hooks/             # 钩子模块
-│   ├── __init__.py
-│   └── memory_hooks.py  # 记忆钩子
+│   ├── __init__.py    # 模块初始化
+│   └── memory_hooks.py  # 记忆钩子，实现记忆检索、写入和冷藏/解冻钩子
 ├── utils/             # 工具模块
-│   ├── __init__.py
-│   ├── migrator.py     # 数据迁移
-│   └── version.py      # 版本管理
+│   ├── __init__.py    # 模块初始化
+│   ├── migrator.py    # 数据迁移，支持从旧格式（MEMORY.md, memory.json）迁移到新的SQLite格式
+│   └── version.py     # 版本管理，处理数据库结构升级和版本控制
 ├── config/            # 配置模块
-│   ├── __init__.py
-│   └── config.py       # 配置管理
-├── __init__.py        # 模块初始化
-├── install.sh         # 安装脚本
-├── install_from_github.sh  # 一键安装脚本
-├── uninstall.sh       # 卸载脚本
-└── README.md          # 文档
+│   ├── __init__.py    # 模块初始化
+│   └── config.py      # 配置管理，处理插件配置和环境变量
+├── __init__.py        # 模块初始化，导出HumanThinkingMemoryManager类
+├── install.sh         # 安装脚本，自动配置QwenPaw以使用HumanThinkingMemoryManager
+├── uninstall.sh       # 卸载脚本，恢复QwenPaw的默认记忆管理器配置
+└── README.md          # 项目文档，包含安装、使用和开发指南
 ```
+
+### 目录说明
+
+1. **core/**：核心功能模块，包含记忆管理器和数据库操作
+   - `database.py`：实现SQLite数据库的创建、查询和管理，包括记忆的存储、检索和更新
+   - `memory_manager.py`：实现记忆管理的核心逻辑，包括记忆的存储、搜索、冷藏/解冻等功能
+
+2. **search/**：搜索功能模块
+   - `vector.py`：实现基于TF-IDF的文本相似度搜索，支持语义搜索和结果排序
+
+3. **hooks/**：钩子模块
+   - `memory_hooks.py`：实现记忆检索、写入和冷藏/解冻钩子，用于扩展记忆管理功能
+
+4. **utils/**：工具模块
+   - `migrator.py`：实现数据迁移功能，支持从旧格式迁移到新的SQLite格式
+   - `version.py`：实现版本管理功能，处理数据库结构升级和版本控制
+
+5. **config/**：配置模块
+   - `config.py`：处理插件配置和环境变量，支持通过配置文件和环境变量进行配置
+
+6. **根目录文件**：
+   - `__init__.py`：模块初始化文件，导出HumanThinkingMemoryManager类
+   - `install.sh`：安装脚本，自动配置QwenPaw以使用HumanThinkingMemoryManager
+   - `uninstall.sh`：卸载脚本，恢复QwenPaw的默认记忆管理器配置
+   - `README.md`：项目文档，包含安装、使用和开发指南
 
 ## 核心 API
 
@@ -418,6 +442,14 @@ chmod +x uninstall.sh
 然后将 `memory_manager.backend` 改回 `remelight` 以使用默认的记忆管理器。
 
 ## 版本历史
+
+- v1.0.2 beta0.1：重构版本，优化项目结构
+  - 重构项目结构，将文件从HumanThinkingMemoryManager目录移到根目录
+  - 修复版本管理表名问题
+  - 修复数据库索引问题
+  - 修复配置属性名问题
+  - 更新版本号为1.0.2 beta0.1
+  - 添加测试脚本
 
 - v1.0.3：性能优化版本，提升高频率会话场景下的性能
   - 实现批量存储记忆功能
