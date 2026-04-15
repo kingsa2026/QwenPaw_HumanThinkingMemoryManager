@@ -418,6 +418,13 @@ chmod +x uninstall.sh
 
 ## 版本历史
 
+- v1.0.1：优化版本，提升搜索和记忆管理能力
+  - 实现模拟人类思考方式的搜索机制
+  - 关键词加就近时间向量搜索
+  - 搜索频率记录与自动权重调整
+  - 优化上下文流畅性
+  - 提升搜索结果质量
+
 - v1.0.0：初始版本，支持基本的记忆管理功能
   - SQLite 本地存储
   - 记忆冷藏/解冻机制
@@ -453,4 +460,4 @@ MIT License
 ## 联系方式
 
 - 项目地址：[https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager](https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager)
-- 问题反馈：[https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/issues](https://github.com/kingsa2026/Q
+- 问题反馈：[https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/issues](https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/issues)
