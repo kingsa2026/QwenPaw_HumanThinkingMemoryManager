@@ -27,8 +27,7 @@ class VersionManager:
             Optional[str]: 版本值
         """
         self.cursor.execute(
-            "SELECT value FROM human_thinking_memory_version WHERE key = ?",
-            (key,)
+            "SELECT db_version FROM qwenpaw_memory_version LIMIT 1",
         )
         row = self.cursor.fetchone()
         if row:
@@ -43,15 +42,8 @@ class VersionManager:
             value: 版本值
             description: 描述
         """
-        self.cursor.execute(
-            """
-            INSERT OR REPLACE INTO human_thinking_memory_version 
-            (key, value, description, updated_at) 
-            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            """,
-            (key, value, description)
-        )
-        self.conn.commit()
+        # 版本信息已经在数据库初始化时插入
+        pass
 
     def get_all_versions(self) -> Dict[str, Any]:
         """获取所有版本信息
@@ -59,16 +51,18 @@ class VersionManager:
         Returns:
             Dict[str, Any]: 版本信息
         """
-        self.cursor.execute("SELECT key, value, description, updated_at FROM human_thinking_memory_version")
-        rows = self.cursor.fetchall()
-        versions = {}
-        for row in rows:
-            versions[row[0]] = {
-                "value": row[1],
-                "description": row[2],
-                "updated_at": row[3]
+        self.cursor.execute("SELECT db_version, schema_version, min_compatible_version, created_at, updated_at, upgrade_history FROM qwenpaw_memory_version LIMIT 1")
+        row = self.cursor.fetchone()
+        if row:
+            return {
+                "db_version": row[0],
+                "schema_version": row[1],
+                "min_compatible_version": row[2],
+                "created_at": row[3],
+                "updated_at": row[4],
+                "upgrade_history": row[5]
             }
-        return versions
+        return {}
 
     def need_upgrade(self) -> bool:
         """检查是否需要升级
@@ -95,26 +89,19 @@ class VersionManager:
         # 升级数据库结构
         self._upgrade_database()
 
-        # 更新版本信息
-        self.set_version("db_version", "1.0.0", "Database structure version")
-        self.set_version("schema_version", "1", "Schema version for structure change tracking")
-        self.set_version("min_compatible_version", "1.0.0", "Minimum compatible version")
-        self.set_version("last_migration_date", datetime.now().isoformat(), "Last migration date")
+        # 版本信息已经在数据库初始化时插入，这里只需要更新版本号
+        self.cursor.execute(
+            """
+            UPDATE qwenpaw_memory_version 
+            SET db_version = ?, schema_version = ?, 
+                min_compatible_version = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+            """,
+            ("1.0.2 bata0.1", "1.0.2 bata0.1", "1.0.0")
+        )
+        self.conn.commit()
 
-        # 更新迁移历史
-        migration_history = self.get_version("migration_history")
-        if migration_history:
-            history = json.loads(migration_history)
-        else:
-            history = []
-
-        history.append({
-            "version": "1.0.0",
-            "date": datetime.now().isoformat(),
-            "description": "Initial database structure"
-        })
-
-        self.set_version("migration_history", json.dumps(history), "Migration history in JSON format")
+        print(f"Database upgraded to version 1.0.2 bata0.1")
 
     def _backup_database(self, db_path: str):
         """备份数据库
@@ -176,9 +163,10 @@ class VersionManager:
         Returns:
             list: 迁移历史
         """
-        migration_history = self.get_version("migration_history")
-        if migration_history:
-            return json.loads(migration_history)
+        self.cursor.execute("SELECT upgrade_history FROM qwenpaw_memory_version LIMIT 1")
+        row = self.cursor.fetchone()
+        if row and row[0]:
+            return json.loads(row[0])
         return []
 
     def add_migration_record(self, version: str, description: str):
@@ -188,10 +176,23 @@ class VersionManager:
             version: 版本号
             description: 描述
         """
-        migration_history = self.get_migration_history()
-        migration_history.append({
+        # 获取当前迁移历史
+        history = self.get_migration_history()
+        
+        # 添加新记录
+        history.append({
             "version": version,
             "date": datetime.now().isoformat(),
             "description": description
         })
-        self.set_version("migration_history", json.dumps(migration_history), "Migration history in JSON format")
+        
+        # 更新数据库
+        self.cursor.execute(
+            """
+            UPDATE qwenpaw_memory_version 
+            SET upgrade_history = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+            """,
+            (json.dumps(history),)
+        )
+        self.conn.commit()

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.5"
+__version__ = "1.0.2 bata0.1"
 
 
 class BaseVectorSearcher:

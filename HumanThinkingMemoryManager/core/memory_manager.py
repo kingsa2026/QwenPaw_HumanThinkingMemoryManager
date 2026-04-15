@@ -82,7 +82,7 @@ def load_agent_config(agent_id):
             class ContextCompact:
                 pass
             
-            class EmbeddingConfig:
+            class embedding_config:
                 backend = "openai"
                 api_key = ""
                 base_url = ""

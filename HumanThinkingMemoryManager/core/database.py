@@ -10,10 +10,10 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.5"
+__version__ = "1.0.2 bata0.1"
 
 # 数据库版本
-CURRENT_DB_VERSION = "3.0.0"
+CURRENT_DB_VERSION = "1.0.2 bata0.1"
 
 
 class HumanThinkingMemoryDB:
@@ -159,7 +159,7 @@ class HumanThinkingMemoryDB:
             "CREATE INDEX IF NOT EXISTS idx_memory_access ON qwenpaw_memory(last_accessed_at)",
             
             # 复合索引
-            "CREATE INDEX IF NOT EXISTS idx_memory_full_join ON qwenpaw_memory(id, embedding_id, agent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_full_join ON qwenpaw_memory(id, agent_id)",
             
             # 向量表索引
             "CREATE INDEX IF NOT EXISTS idx_vector_metadata ON qwenpaw_memory_vectors(id, vector_type, vector_dimension)",
