@@ -53,73 +53,98 @@ fi
 # 自动查找QwenPaw根目录
 find_qwenpaw_root() {
     local search_path="$1"
-    local max_depth=5
+    
+    echo "   正在搜索 QwenPaw 根目录..."
 
     # 检查标准路径结构（QwenPaw源码目录）
     check_standard_layout() {
         local path="$1"
         if [ -d "$path/src/qwenpaw" ] && [ -f "$path/pyproject.toml" ]; then
-            echo "$path"
             return 0
         fi
         return 1
     }
 
-    # 如果直接传入的是有效路径
-    if [ -d "$search_path/src/qwenpaw" ] && [ -f "$search_path/pyproject.toml" ]; then
-        echo "$search_path"
+    # 1. 首先检查当前目录
+    if check_standard_layout "$(pwd)"; then
+        echo "$(pwd)"
         return 0
     fi
 
-    # 向上搜索（最多5层）
-    local current_path="$search_path"
-    for i in {1..5}; do
-        if check_standard_layout "$current_path"; then
-            echo "$current_path"
+    # 2. 如果传入了搜索路径，先检查它
+    if [ -n "$search_path" ] && [ -d "$search_path" ]; then
+        if check_standard_layout "$search_path"; then
+            echo "$search_path"
             return 0
         fi
-        current_path="$(dirname "$current_path")"
-    done
+    fi
 
-    # 尝试环境变量
-    if [ -n "$QWENPAW_WORKING_DIR" ] && [ -d "$QWENPAW_WORKING_DIR" ]; then
+    # 3. 尝试环境变量 QWENPAW_ROOT（优先级最高）
+    if [ -n "$QWENPAW_ROOT" ]; then
+        echo "   检查环境变量 QWENPAW_ROOT: $QWENPAW_ROOT"
+        if check_standard_layout "$QWENPAW_ROOT"; then
+            echo "$QWENPAW_ROOT"
+            return 0
+        fi
+    fi
+
+    # 4. 尝试环境变量 QWENPAW_WORKING_DIR
+    if [ -n "$QWENPAW_WORKING_DIR" ]; then
+        echo "   检查环境变量 QWENPAW_WORKING_DIR: $QWENPAW_WORKING_DIR"
+        if check_standard_layout "$QWENPAW_WORKING_DIR"; then
+            echo "$QWENPAW_WORKING_DIR"
+            return 0
+        fi
+        # 尝试向上查找2层
         local src_path="$QWENPAW_WORKING_DIR"
-        for i in {1..3}; do
+        for i in {1..2}; do
+            src_path="$(dirname "$src_path")"
+            if [ "$src_path" = "/" ]; then
+                break
+            fi
             if check_standard_layout "$src_path"; then
                 echo "$src_path"
                 return 0
             fi
-            src_path="$(dirname "$src_path")"
         done
     fi
 
-    # 尝试环境变量 QWENPAW_ROOT
-    if [ -n "$QWENPAW_ROOT" ] && [ -d "$QWENPAW_ROOT/src/qwenpaw" ]; then
-        echo "$QWENPAW_ROOT"
-        return 0
-    fi
-
-    # 尝试常见位置（按优先级排序）
+    # 5. 尝试常见位置（快速检查）
     local common_paths=(
         "$HOME/.qwenpaw"
         "$HOME/.copaw"
         "$HOME/QwenPaw"
         "$HOME/qwenpaw"
-        "$HOME/projects/qwenpaw"
         "/opt/QwenPaw"
         "/opt/qwenpaw"
         "/root/QwenPaw"
         "/root/qwenpaw"
-        "/usr/local/QwenPaw"
-        "/usr/local/qwenpaw"
     )
 
     for path in "${common_paths[@]}"; do
-        if check_standard_layout "$path"; then
-            echo "$path"
-            return 0
+        if [ -d "$path" ]; then
+            if check_standard_layout "$path"; then
+                echo "$path"
+                return 0
+            fi
         fi
     done
+
+    # 6. 向上搜索（最多3层，避免卡住）
+    if [ -n "$search_path" ] && [ -d "$search_path" ]; then
+        echo "   从 $search_path 向上搜索..."
+        local current_path="$search_path"
+        for i in {1..3}; do
+            current_path="$(dirname "$current_path")"
+            if [ "$current_path" = "/" ]; then
+                break
+            fi
+            if check_standard_layout "$current_path"; then
+                echo "$current_path"
+                return 0
+            fi
+        done
+    fi
 
     return 1
 }
@@ -130,29 +155,27 @@ if [ $# -gt 0 ]; then
     echo "使用命令行指定的路径: $QwenPaw_PATH"
 else
     echo "正在自动查找QwenPaw根目录..."
-    if [ -d "./src/qwenpaw" ] && [ -f "./pyproject.toml" ]; then
-        QwenPaw_PATH="$(pwd)"
-        echo "在当前目录找到QwenPaw: $QwenPaw_PATH"
-    else
-        QwenPaw_PATH=$(find_qwenpaw_root "$(pwd)")
-        if [ -z "$QwenPaw_PATH" ]; then
-            echo "错误: 无法找到QwenPaw根目录"
-            echo ""
-            echo "请使用以下方式之一指定QwenPaw路径:"
-            echo "1. 在QwenPaw根目录运行此脚本:"
-            echo "   cd /path/to/QwenPaw"
-            echo "   bash /path/to/install.sh"
-            echo ""
-            echo "2. 使用命令行参数指定路径:"
-            echo "   bash install.sh /path/to/QwenPaw"
-            echo ""
-            echo "3. 设置环境变量:"
-            echo "   export QWENPAW_ROOT=/path/to/QwenPaw"
-            echo "   bash install.sh"
-            exit 1
-        fi
-        echo "自动找到QwenPaw: $QwenPaw_PATH"
+    QwenPaw_PATH=$(find_qwenpaw_root "$(pwd)")
+    
+    if [ -z "$QwenPaw_PATH" ]; then
+        echo ""
+        echo "❌ 错误: 无法找到QwenPaw根目录"
+        echo ""
+        echo "请使用以下方式之一指定QwenPaw路径:"
+        echo ""
+        echo "1. 在QwenPaw根目录运行此脚本:"
+        echo "   cd /path/to/QwenPaw"
+        echo "   bash /path/to/install.sh"
+        echo ""
+        echo "2. 使用命令行参数指定路径:"
+        echo "   bash install.sh /path/to/QwenPaw"
+        echo ""
+        echo "3. 设置环境变量:"
+        echo "   export QWENPAW_ROOT=/path/to/QwenPaw"
+        echo "   bash install.sh"
+        exit 1
     fi
+    echo "✓ 自动找到QwenPaw: $QwenPaw_PATH"
 fi
 
 # 验证找到的路径

@@ -151,15 +151,22 @@ class TestHumanThinkingMemoryManager(unittest.TestCase):
         """测试QwenPaw集成功能"""
         # 模拟QwenPaw的_resolve_memory_class函数
         try:
-            # 尝试导入HumanThinkingMemoryManager
-            from HumanThinkingMemoryManager.core.memory_manager import HumanThinkingMemoryManager
+            # 尝试导入HumanThinkingMemoryManager（从core模块直接导入）
+            from core.memory_manager import HumanThinkingMemoryManager
             # 验证类是否存在
             self.assertTrue(hasattr(HumanThinkingMemoryManager, '__init__'))
-            # 验证类是否有必要的方法
+            # 验证类是否有BaseMemoryManager要求的所有抽象方法
             self.assertTrue(hasattr(HumanThinkingMemoryManager, 'start'))
             self.assertTrue(hasattr(HumanThinkingMemoryManager, 'close'))
-            self.assertTrue(hasattr(HumanThinkingMemoryManager, 'store_memory'))
+            self.assertTrue(hasattr(HumanThinkingMemoryManager, 'compact_tool_result'))
+            self.assertTrue(hasattr(HumanThinkingMemoryManager, 'check_context'))
+            self.assertTrue(hasattr(HumanThinkingMemoryManager, 'compact_memory'))
+            self.assertTrue(hasattr(HumanThinkingMemoryManager, 'summary_memory'))
+            self.assertTrue(hasattr(HumanThinkingMemoryManager, 'dream_memory'))
             self.assertTrue(hasattr(HumanThinkingMemoryManager, 'memory_search'))
+            self.assertTrue(hasattr(HumanThinkingMemoryManager, 'get_in_memory_memory'))
+            # 验证是否有get_stats方法（可选但有用）
+            self.assertTrue(hasattr(HumanThinkingMemoryManager, 'get_stats'))
         except ImportError as e:
             self.fail(f"QwenPaw集成测试失败: {e}")
 

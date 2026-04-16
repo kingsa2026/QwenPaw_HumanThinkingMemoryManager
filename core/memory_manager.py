@@ -530,6 +530,16 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         # 简单拼接（实际项目中可以使用 LLM 生成摘要）
         return "\n".join([f"{m.name}: {m.content}" for m in messages[:10]])
 
+    async def dream_memory(self, **kwargs) -> None:
+        """Run one dream-based memory optimization task.
+
+        Args:
+            **kwargs: Additional keyword arguments for the dream task.
+        """
+        logger.info("dream_memory called - HumanThinkingMemoryManager does not implement dream-based optimization")
+        # Dream-based memory optimization is not implemented in this version
+        pass
+
     def _lazy_init_components(self):
         """延迟初始化组件"""
         # 初始化向量搜索器
