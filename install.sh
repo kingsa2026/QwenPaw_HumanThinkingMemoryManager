@@ -16,7 +16,7 @@ find_qwenpaw_root() {
     local search_path="$1"
     local max_depth=5
 
-    # 检查标准路径结构
+    # 检查标准路径结构（QwenPaw源码目录）
     check_standard_layout() {
         local path="$1"
         if [ -d "$path/src/qwenpaw" ] && [ -f "$path/pyproject.toml" ]; then
@@ -43,17 +43,38 @@ find_qwenpaw_root() {
     done
 
     # 尝试环境变量
+    if [ -n "$QWENPAW_WORKING_DIR" ] && [ -d "$QWENPAW_WORKING_DIR" ]; then
+        # QWENPAW_WORKING_DIR是工作目录，需要向上查找源码
+        local src_path="$QWENPAW_WORKING_DIR"
+        for i in {1..3}; do
+            if check_standard_layout "$src_path"; then
+                echo "$src_path"
+                return 0
+            fi
+            src_path="$(dirname "$src_path")"
+        done
+    fi
+
+    # 尝试环境变量 QWENPAW_ROOT
     if [ -n "$QWENPAW_ROOT" ] && [ -d "$QWENPAW_ROOT/src/qwenpaw" ]; then
         echo "$QWENPAW_ROOT"
         return 0
     fi
 
-    # 尝试常见位置
+    # 尝试常见位置（按优先级排序）
+    # QwenPaw的WORKING_DIR默认是 ~/.qwenpaw，但源码通常在其他位置
     local common_paths=(
-        "$HOME/qwenpaw"
+        "$HOME/.qwenpaw"           # QwenPaw默认工作目录（可能包含源码）
+        "$HOME/.copaw"             # 旧版本QwenPaw工作目录
+        "$HOME/QwenPaw"            # 用户目录下的大写版本
+        "$HOME/qwenpaw"            # 用户目录下的小写版本
         "$HOME/projects/qwenpaw"
+        "/opt/QwenPaw"
         "/opt/qwenpaw"
+        "/root/QwenPaw"
         "/root/qwenpaw"
+        "/usr/local/QwenPaw"
+        "/usr/local/qwenpaw"
     )
 
     for path in "${common_paths[@]}"; do
@@ -97,6 +118,10 @@ else
             echo ""
             echo "3. 使用命令行参数指定路径:"
             echo "   bash install.sh /path/to/QwenPaw"
+            echo ""
+            echo "4. 设置环境变量:"
+            echo "   export QWENPAW_ROOT=/path/to/QwenPaw"
+            echo "   bash install.sh"
             exit 1
         fi
 
