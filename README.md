@@ -163,6 +163,29 @@ Human Thinking Memory Manager 使用 SQLite 数据库存储记忆，数据库结
 bash src/qwenpaw/agents/tools/HumanThinkingMemoryManager/install.sh
 ```
 
+### 从旧版本升级
+
+如果您正在使用旧版本的HumanThinkingMemoryManager，可以使用以下脚本一键升级到最新版本：
+
+#### Linux/Mac系统
+```bash
+cd /path/to/QwenPaw/src/qwenpaw/agents/tools/HumanThinkingMemoryManager
+./upgrade.sh
+```
+
+#### Windows系统
+```bash
+cd C:\path\to\QwenPaw\src\qwenpaw\agents\tools\HumanThinkingMemoryManager
+upgrade.bat
+```
+
+升级脚本会自动：
+1. 备份旧版本
+2. 清理旧文件
+3. 下载最新版本
+4. 安装到QwenPaw
+5. 运行数据库升级
+
 ## 配置选项
 
 ### 嵌入配置
