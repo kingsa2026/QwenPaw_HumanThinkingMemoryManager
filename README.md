@@ -6,8 +6,9 @@
 
 ### 一键安装（最简单）
 
+直接调用仓库脚本，无需下载（推荐）：
+
 ```bash
-# 直接调用仓库脚本，无需下载（推荐）
 bash <(curl -s https://raw.githubusercontent.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/main/install.sh)
 ```
 
@@ -19,8 +20,9 @@ wget -qO- https://raw.githubusercontent.com/kingsa2026/QwenPaw_HumanThinkingMemo
 
 ### 方式二：先下载再运行
 
+下载安装脚本并运行：
+
 ```bash
-# 下载安装脚本
 wget -O install_human_thinking.sh https://raw.githubusercontent.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/main/install.sh
 chmod +x install_human_thinking.sh
 ./install_human_thinking.sh
@@ -139,7 +141,17 @@ chmod +x install_human_thinking.sh
 
 ## 安装方法
 
-### 方式一：一键安装（推荐）
+### 方式一：直接调用仓库脚本（最简单）
+
+```bash
+# 方式 A：使用 curl（推荐）
+bash <(curl -s https://raw.githubusercontent.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/main/install.sh)
+
+# 方式 B：使用 wget
+wget -qO- https://raw.githubusercontent.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/main/install.sh | bash
+```
+
+### 方式二：先下载再运行
 
 ```bash
 # 下载安装脚本
