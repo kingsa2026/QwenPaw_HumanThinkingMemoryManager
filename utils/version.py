@@ -97,11 +97,11 @@ class VersionManager:
                 min_compatible_version = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
             """,
-            ("1.0.2 bata0.1", "1.0.2 bata0.1", "1.0.0")
+            ("1.0.2-beta0.2", "1.0.2-beta0.2", "1.0.0")
         )
         self.conn.commit()
 
-        print(f"Database upgraded to version 1.0.2 bata0.1")
+        print(f"Database upgraded to version 1.0.2-beta0.2")
 
     def _backup_database(self, db_path: str):
         """备份数据库
@@ -141,8 +141,17 @@ class VersionManager:
         Returns:
             int: 1 if version1 > version2, -1 if version1 < version2, 0 otherwise
         """
-        v1_parts = list(map(int, version1.split('.')))
-        v2_parts = list(map(int, version2.split('.')))
+        # 处理包含beta的版本号
+        def parse_version(version):
+            # 移除beta部分
+            if '-' in version:
+                version = version.split('-')[0]
+            # 分割版本号并转换为整数
+            parts = version.split('.')
+            return [int(p) for p in parts if p.isdigit()]
+
+        v1_parts = parse_version(version1)
+        v2_parts = parse_version(version2)
 
         for v1, v2 in zip(v1_parts, v2_parts):
             if v1 > v2:

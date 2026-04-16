@@ -10,10 +10,10 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.2 bata0.1"
+__version__ = "1.0.2-beta0.2"
 
 # 数据库版本
-CURRENT_DB_VERSION = "1.0.2 bata0.1"
+CURRENT_DB_VERSION = "1.0.2-beta0.2"
 
 
 class HumanThinkingMemoryDB:
@@ -122,7 +122,48 @@ class HumanThinkingMemoryDB:
             )
         """)
 
-        # 5. 工具使用统计表
+        # 5. 记忆关联表
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qwenpaw_memory_relations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id1 INTEGER NOT NULL,
+                memory_id2 INTEGER NOT NULL,
+                relation_type TEXT DEFAULT 'related',
+                similarity_score REAL DEFAULT 0.0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (memory_id1) REFERENCES qwenpaw_memory(id) ON DELETE CASCADE,
+                FOREIGN KEY (memory_id2) REFERENCES qwenpaw_memory(id) ON DELETE CASCADE,
+                UNIQUE (memory_id1, memory_id2)
+            )
+        """)
+
+        # 6. 记忆分类表
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qwenpaw_memory_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_name TEXT NOT NULL UNIQUE,
+                category_description TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 7. 记忆分类关联表
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS qwenpaw_memory_category_relations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL,
+                category_id INTEGER NOT NULL,
+                confidence REAL DEFAULT 0.5,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (memory_id) REFERENCES qwenpaw_memory(id) ON DELETE CASCADE,
+                FOREIGN KEY (category_id) REFERENCES qwenpaw_memory_categories(id) ON DELETE CASCADE,
+                UNIQUE (memory_id, category_id)
+            )
+        """)
+
+        # 8. 工具使用统计表
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS qwenpaw_tool_usage_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,6 +210,13 @@ class HumanThinkingMemoryDB:
             
             # 工具统计索引
             "CREATE INDEX IF NOT EXISTS idx_tool_stats_agent ON qwenpaw_tool_usage_stats(agent_id, tool_name)",
+            
+            # 记忆关联表索引
+            "CREATE INDEX IF NOT EXISTS idx_memory_relations_1 ON qwenpaw_memory_relations(memory_id1)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_relations_2 ON qwenpaw_memory_relations(memory_id2)",
+            
+            # 记忆分类关联表索引
+            "CREATE INDEX IF NOT EXISTS idx_memory_category_relations ON qwenpaw_memory_category_relations(memory_id, category_id)"
         ]
         
         for idx_sql in indexes:
@@ -787,6 +835,304 @@ class HumanThinkingMemoryDB:
             self.conn.close()
             self.conn = None
             self.cursor = None
+
+    def insert_category(self, category_name: str, category_description: str = "") -> int:
+        """插入记忆分类
+
+        Args:
+            category_name: 分类名称
+            category_description: 分类描述
+
+        Returns:
+            int: 分类ID
+        """
+        with self._transaction():
+            self.cursor.execute(
+                """
+                INSERT OR IGNORE INTO qwenpaw_memory_categories 
+                (category_name, category_description)
+                VALUES (?, ?)
+                """,
+                (category_name, category_description)
+            )
+            # 获取分类ID
+            self.cursor.execute(
+                "SELECT id FROM qwenpaw_memory_categories WHERE category_name = ?",
+                (category_name,)
+            )
+            row = self.cursor.fetchone()
+            return row[0] if row else None
+
+    def categorize_memory(self, memory_id: int, category_name: str, confidence: float = 0.5) -> bool:
+        """为记忆添加分类
+
+        Args:
+            memory_id: 记忆ID
+            category_name: 分类名称
+            confidence: 分类置信度
+
+        Returns:
+            bool: 是否成功
+        """
+        # 获取或创建分类
+        category_id = self.insert_category(category_name)
+        if not category_id:
+            return False
+
+        with self._transaction():
+            self.cursor.execute(
+                """
+                INSERT OR REPLACE INTO qwenpaw_memory_category_relations 
+                (memory_id, category_id, confidence)
+                VALUES (?, ?, ?)
+                """,
+                (memory_id, category_id, confidence)
+            )
+            return self.cursor.rowcount > 0
+
+    def get_memory_categories(self, memory_id: int) -> List[Dict[str, Any]]:
+        """获取记忆的分类
+
+        Args:
+            memory_id: 记忆ID
+
+        Returns:
+            List[Dict[str, Any]]: 分类列表
+        """
+        self.cursor.execute(
+            """
+            SELECT c.id, c.category_name, c.category_description, r.confidence
+            FROM qwenpaw_memory_categories c
+            JOIN qwenpaw_memory_category_relations r ON c.id = r.category_id
+            WHERE r.memory_id = ?
+            """,
+            (memory_id,)
+        )
+        results = []
+        for row in self.cursor.fetchall():
+            results.append({
+                "id": row[0],
+                "category_name": row[1],
+                "category_description": row[2],
+                "confidence": row[3]
+            })
+        return results
+
+    def search_by_category(self, category_name: str, max_results: int = 10) -> List[Dict[str, Any]]:
+        """按分类搜索记忆
+
+        Args:
+            category_name: 分类名称
+            max_results: 最大结果数
+
+        Returns:
+            List[Dict[str, Any]]: 记忆列表
+        """
+        self.cursor.execute(
+            """
+            SELECT m.id, m.content, m.content_summary, m.source_id, m.session_id,
+                   m.importance, m.importance_score, m.access_count, m.access_frozen,
+                   m.last_accessed_at, m.created_at, m.metadata, m.tags,
+                   r.confidence
+            FROM qwenpaw_memory m
+            JOIN qwenpaw_memory_category_relations r ON m.id = r.memory_id
+            JOIN qwenpaw_memory_categories c ON r.category_id = c.id
+            WHERE c.category_name = ? AND m.agent_id = ? AND m.deleted_at IS NULL
+            ORDER BY r.confidence DESC, m.importance DESC, m.last_accessed_at DESC
+            LIMIT ?
+            """,
+            (category_name, self.agent_id, max_results)
+        )
+        results = []
+        for row in self.cursor.fetchall():
+            results.append({
+                "id": row[0],
+                "content": row[1],
+                "content_summary": row[2],
+                "source_id": row[3],
+                "session_id": row[4],
+                "importance": row[5],
+                "importance_score": row[6],
+                "access_count": row[7],
+                "access_frozen": row[8],
+                "last_accessed_at": row[9],
+                "created_at": row[10],
+                "metadata": json.loads(row[11] or "{}"),
+                "tags": json.loads(row[12] or "[]"),
+                "category_confidence": row[13]
+            })
+        return results
+
+    def create_memory_relation(self, memory_id1: int, memory_id2: int, 
+                            relation_type: str = "related", similarity_score: float = 0.0) -> bool:
+        """创建记忆之间的关联
+
+        Args:
+            memory_id1: 第一个记忆ID
+            memory_id2: 第二个记忆ID
+            relation_type: 关联类型
+            similarity_score: 相似度分数
+
+        Returns:
+            bool: 是否成功
+        """
+        # 确保memory_id1 < memory_id2，避免重复
+        if memory_id1 > memory_id2:
+            memory_id1, memory_id2 = memory_id2, memory_id1
+
+        with self._transaction():
+            self.cursor.execute(
+                """
+                INSERT OR REPLACE INTO qwenpaw_memory_relations 
+                (memory_id1, memory_id2, relation_type, similarity_score)
+                VALUES (?, ?, ?, ?)
+                """,
+                (memory_id1, memory_id2, relation_type, similarity_score)
+            )
+            return self.cursor.rowcount > 0
+
+    def get_related_memories(self, memory_id: int, max_results: int = 5) -> List[Dict[str, Any]]:
+        """获取与指定记忆相关的记忆
+
+        Args:
+            memory_id: 记忆ID
+            max_results: 最大结果数
+
+        Returns:
+            List[Dict[str, Any]]: 相关记忆列表
+        """
+        self.cursor.execute(
+            """
+            SELECT m.id, m.content, m.content_summary, m.source_id, m.session_id,
+                   m.importance, m.importance_score, m.access_count, m.access_frozen,
+                   m.last_accessed_at, m.created_at, m.metadata, m.tags,
+                   r.relation_type, r.similarity_score
+            FROM qwenpaw_memory m
+            JOIN qwenpaw_memory_relations r ON 
+                (m.id = r.memory_id1 AND r.memory_id2 = ?) OR 
+                (m.id = r.memory_id2 AND r.memory_id1 = ?)
+            WHERE m.agent_id = ? AND m.deleted_at IS NULL
+            ORDER BY r.similarity_score DESC, m.importance DESC, m.last_accessed_at DESC
+            LIMIT ?
+            """,
+            (memory_id, memory_id, self.agent_id, max_results)
+        )
+        results = []
+        for row in self.cursor.fetchall():
+            results.append({
+                "id": row[0],
+                "content": row[1],
+                "content_summary": row[2],
+                "source_id": row[3],
+                "session_id": row[4],
+                "importance": row[5],
+                "importance_score": row[6],
+                "access_count": row[7],
+                "access_frozen": row[8],
+                "last_accessed_at": row[9],
+                "created_at": row[10],
+                "metadata": json.loads(row[11] or "{}"),
+                "tags": json.loads(row[12] or "[]"),
+                "relation_type": row[13],
+                "similarity_score": row[14]
+            })
+        return results
+
+    def update_memory_summary(self, memory_id: int, summary: str) -> bool:
+        """更新记忆摘要
+
+        Args:
+            memory_id: 记忆ID
+            summary: 记忆摘要
+
+        Returns:
+            bool: 是否成功
+        """
+        with self._transaction():
+            self.cursor.execute(
+                """
+                UPDATE qwenpaw_memory
+                SET content_summary = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (summary, memory_id)
+            )
+            return self.cursor.rowcount > 0
+
+    def update_memory_priority(self, memory_id: int, importance: Optional[int] = None, 
+                             importance_score: Optional[float] = None) -> bool:
+        """更新记忆优先级
+
+        Args:
+            memory_id: 记忆ID
+            importance: 重要性等级 (1-5)
+            importance_score: 重要性分数
+
+        Returns:
+            bool: 是否成功
+        """
+        with self._transaction():
+            if importance is not None and importance_score is not None:
+                self.cursor.execute(
+                    """
+                    UPDATE qwenpaw_memory
+                    SET importance = ?, importance_score = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (importance, importance_score, memory_id)
+                )
+            elif importance is not None:
+                self.cursor.execute(
+                    """
+                    UPDATE qwenpaw_memory
+                    SET importance = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (importance, memory_id)
+                )
+            elif importance_score is not None:
+                self.cursor.execute(
+                    """
+                    UPDATE qwenpaw_memory
+                    SET importance_score = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (importance_score, memory_id)
+                )
+            else:
+                return False
+            return self.cursor.rowcount > 0
+
+    def auto_adjust_priority(self, days: int = 7) -> int:
+        """自动调整记忆优先级
+
+        Args:
+            days: 统计天数
+
+        Returns:
+            int: 调整的记忆数量
+        """
+        with self._transaction():
+            # 基于访问频率和搜索频率调整重要性
+            self.cursor.execute(
+                """
+                UPDATE qwenpaw_memory
+                SET 
+                    importance = CASE 
+                        WHEN access_count > 10 OR search_count > 5 THEN 5
+                        WHEN access_count > 5 OR search_count > 3 THEN 4
+                        WHEN access_count > 1 OR search_count > 0 THEN 3
+                        ELSE 2
+                    END,
+                    importance_score = (access_count * 0.5) + (search_count * 1.0),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE agent_id = ?
+                  AND last_accessed_at > datetime('now', '-' || ? || ' days')
+                  AND deleted_at IS NULL
+                """,
+                (self.agent_id, days)
+            )
+            return self.cursor.rowcount
 
     def __del__(self):
         """析构函数，确保关闭数据库连接"""
