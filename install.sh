@@ -141,12 +141,7 @@ else
     # 如果没找到源码目录，尝试查找pip安装的QwenPaw
     if [ -z "$QwenPaw_PATH" ]; then
         echo "未找到QwenPaw源码目录，正在查找pip安装的QwenPaw..."
-        QwenPaw_PATH=$(python3 -c "import qwenpaw, os; print(os.path.dirname(os.path.dirname(qwenpaw.__file__)))" 2>/dev/null) || true
-        
-        if [ -z "$QwenPaw_PATH" ]; then
-            # 尝试从site-packages路径
-            QwenPaw_PATH=$(python3 -c "import site; print(site.getsitepackages()[0] + '/qwenpaw')" 2>/dev/null) || true
-        fi
+        QwenPaw_PATH=$(python3 -c "import qwenpaw, os; print(os.path.dirname(qwenpaw.__file__))" 2>/dev/null) || true
     fi
     
     if [ -z "$QwenPaw_PATH" ]; then
