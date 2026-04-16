@@ -10,11 +10,11 @@ from unittest.mock import Mock, patch
 
 # 添加测试目录到Python路径
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'HumanThinkingMemoryManager'))
+sys.path.insert(0, os.path.dirname(__file__))
 
 # 直接从core模块导入，避免依赖agentscope
-from HumanThinkingMemoryManager.core.memory_manager import HumanThinkingMemoryManager
-from HumanThinkingMemoryManager.core.database import HumanThinkingMemoryDB
+from core.memory_manager import HumanThinkingMemoryManager
+from core.database import HumanThinkingMemoryDB
 
 
 class TestHumanThinkingMemoryManager(unittest.TestCase):

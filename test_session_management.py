@@ -3,7 +3,11 @@
 """测试会话管理和缓存机制"""
 import asyncio
 import time
-from HumanThinkingMemoryManager.core.memory_manager import HumanThinkingMemoryManager
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from core.memory_manager import HumanThinkingMemoryManager
 
 async def test_session_management():
     """测试会话管理功能"""
