@@ -144,6 +144,22 @@ else
         QwenPaw_PATH=$(python3 -c "import qwenpaw, os; print(os.path.dirname(qwenpaw.__file__))" 2>/dev/null) || true
     fi
     
+    # 如果还是没找到，尝试查找虚拟环境中的QwenPaw
+    if [ -z "$QwenPaw_PATH" ]; then
+        echo "未找到pip安装的QwenPaw，正在查找虚拟环境..."
+        # 查找常见的虚拟环境位置
+        VENV_PATHS="$HOME/.qwenpaw/venv $HOME/.copaw/venv /root/.qwenpaw/venv /root/.copaw/venv"
+        for venv in $VENV_PATHS; do
+            if [ -d "$venv" ]; then
+                # 查找site-packages中的qwenpaw
+                QwenPaw_PATH=$(find "$venv/lib" -name "qwenpaw" -type d -path "*/site-packages/qwenpaw" 2>/dev/null | head -1)
+                if [ -n "$QwenPaw_PATH" ]; then
+                    break
+                fi
+            fi
+        done
+    fi
+    
     if [ -z "$QwenPaw_PATH" ]; then
         echo ""
         echo "❌ 错误: 无法找到QwenPaw根目录"
