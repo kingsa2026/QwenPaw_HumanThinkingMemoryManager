@@ -97,11 +97,11 @@ class VersionManager:
                 min_compatible_version = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
             """,
-            ("1.0.2-beta0.2", "1.0.2-beta0.2", "1.0.0")
+            ("1.0.2-beta0.3", "1.0.2-beta0.3", "1.0.0")
         )
         self.conn.commit()
 
-        print(f"Database upgraded to version 1.0.2-beta0.2")
+        print(f"Database upgraded to version 1.0.2-beta0.3")
 
     def _backup_database(self, db_path: str):
         """备份数据库

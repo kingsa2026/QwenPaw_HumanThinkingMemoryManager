@@ -3,6 +3,8 @@
 import sqlite3
 import json
 import logging
+import zlib
+import base64
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
@@ -10,10 +12,49 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.2-beta0.2"
+
+def compress_content(content: str) -> str:
+    """压缩内容并返回Base64编码的字符串
+
+    Args:
+        content: 要压缩的内容
+
+    Returns:
+        str: Base64编码的压缩内容
+    """
+    if not content:
+        return content
+    try:
+        compressed = zlib.compress(content.encode('utf-8'))
+        return base64.b64encode(compressed).decode('ascii')
+    except Exception as e:
+        logger.warning(f"内容压缩失败: {e}")
+        return content
+
+
+def decompress_content(compressed_content: str) -> str:
+    """解压缩Base64编码的内容
+
+    Args:
+        compressed_content: Base64编码的压缩内容
+
+    Returns:
+        str: 解压缩后的内容
+    """
+    if not compressed_content:
+        return compressed_content
+    try:
+        decoded = base64.b64decode(compressed_content.encode('ascii'))
+        return zlib.decompress(decoded).decode('utf-8')
+    except Exception as e:
+        logger.warning(f"内容解压缩失败: {e}")
+        return compressed_content
+
+
+__version__ = "1.0.2-beta0.3"
 
 # 数据库版本
-CURRENT_DB_VERSION = "1.0.2-beta0.2"
+CURRENT_DB_VERSION = "1.0.2-beta0.3"
 
 
 class HumanThinkingMemoryDB:
@@ -188,9 +229,9 @@ class HumanThinkingMemoryDB:
 
     def _create_indexes(self):
         """创建索引优化查询性能"""
-        # 6. 索引创建
+        # 优化后的索引创建
         indexes = [
-            # 主表索引
+            # 主表索引 - 优化查询性能
             "CREATE INDEX IF NOT EXISTS idx_memory_agent ON qwenpaw_memory(agent_id)",
             "CREATE INDEX IF NOT EXISTS idx_memory_session ON qwenpaw_memory(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_memory_importance ON qwenpaw_memory(importance)",
@@ -199,24 +240,42 @@ class HumanThinkingMemoryDB:
             "CREATE INDEX IF NOT EXISTS idx_memory_source ON qwenpaw_memory(source_id)",
             "CREATE INDEX IF NOT EXISTS idx_memory_access ON qwenpaw_memory(last_accessed_at)",
             
-            # 复合索引
+            # 复合索引 - 优化组合查询
             "CREATE INDEX IF NOT EXISTS idx_memory_full_join ON qwenpaw_memory(id, agent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_agent_session ON qwenpaw_memory(agent_id, session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_agent_importance ON qwenpaw_memory(agent_id, importance DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_agent_access ON qwenpaw_memory(agent_id, last_accessed_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_agent_frozen ON qwenpaw_memory(agent_id, access_frozen)",
+            
+            # 搜索优化索引
+            "CREATE INDEX IF NOT EXISTS idx_memory_search ON qwenpaw_memory(agent_id, search_count DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_importance_score ON qwenpaw_memory(importance_score DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_access_count ON qwenpaw_memory(access_count DESC)",
+            
+            # 时间范围查询索引
+            "CREATE INDEX IF NOT EXISTS idx_memory_time_range ON qwenpaw_memory(created_at, last_accessed_at)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_recent ON qwenpaw_memory(last_accessed_at DESC)",
             
             # 向量表索引
             "CREATE INDEX IF NOT EXISTS idx_vector_metadata ON qwenpaw_memory_vectors(id, vector_type, vector_dimension)",
+            "CREATE INDEX IF NOT EXISTS idx_vector_type ON qwenpaw_memory_vectors(vector_type)",
             
             # 缓存表索引
             "CREATE INDEX IF NOT EXISTS idx_cache_expires ON qwenpaw_vector_cache(expires_at)",
+            "CREATE INDEX IF NOT EXISTS idx_cache_hit ON qwenpaw_vector_cache(hit_count DESC)",
             
             # 工具统计索引
             "CREATE INDEX IF NOT EXISTS idx_tool_stats_agent ON qwenpaw_tool_usage_stats(agent_id, tool_name)",
+            "CREATE INDEX IF NOT EXISTS idx_tool_stats_calls ON qwenpaw_tool_usage_stats(total_calls DESC)",
             
             # 记忆关联表索引
             "CREATE INDEX IF NOT EXISTS idx_memory_relations_1 ON qwenpaw_memory_relations(memory_id1)",
             "CREATE INDEX IF NOT EXISTS idx_memory_relations_2 ON qwenpaw_memory_relations(memory_id2)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_relations_score ON qwenpaw_memory_relations(similarity_score DESC)",
             
             # 记忆分类关联表索引
-            "CREATE INDEX IF NOT EXISTS idx_memory_category_relations ON qwenpaw_memory_category_relations(memory_id, category_id)"
+            "CREATE INDEX IF NOT EXISTS idx_memory_category_relations ON qwenpaw_memory_category_relations(memory_id, category_id)",
+            "CREATE INDEX IF NOT EXISTS idx_memory_category_confidence ON qwenpaw_memory_category_relations(confidence DESC)"
         ]
         
         for idx_sql in indexes:
@@ -235,6 +294,211 @@ class HumanThinkingMemoryDB:
                 (db_version, schema_version, min_compatible_version)
                 VALUES (?, ?, ?)
             """, (CURRENT_DB_VERSION, CURRENT_DB_VERSION, "1.0.0"))
+
+    def get_hot_memories(self, agent_id: str = None, max_results: int = 100) -> List[Dict[str, Any]]:
+        """获取热数据（高访问频率的记忆）
+
+        Args:
+            agent_id: Agent ID（可选，默认当前agent）
+            max_results: 最大结果数
+
+        Returns:
+            List[Dict[str, Any]]: 热数据记忆列表
+        """
+        search_agent = agent_id or self.agent_id
+
+        self.cursor.execute(
+            """
+            SELECT id, content, content_summary, source_id, session_id,
+                   importance, importance_score, access_count, search_count,
+                   last_accessed_at, created_at, metadata, tags
+            FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND access_frozen = 0
+              AND (access_count > 0 OR search_count > 0)
+            ORDER BY (access_count * 0.5 + search_count * 1.0) DESC, last_accessed_at DESC
+            LIMIT ?
+            """,
+            (search_agent, max_results)
+        )
+
+        results = []
+        for row in self.cursor.fetchall():
+            results.append({
+                "id": row[0],
+                "content": row[1],
+                "content_summary": row[2],
+                "source_id": row[3],
+                "session_id": row[4],
+                "importance": row[5],
+                "importance_score": row[6],
+                "access_count": row[7],
+                "search_count": row[8],
+                "last_accessed_at": row[9],
+                "created_at": row[10],
+                "metadata": json.loads(row[11] or "{}"),
+                "tags": json.loads(row[12] or "[]"),
+                "is_hot": True
+            })
+        return results
+
+    def get_cold_memories(self, agent_id: str = None, max_results: int = 100) -> List[Dict[str, Any]]:
+        """获取冷数据（低访问频率的记忆）
+
+        Args:
+            agent_id: Agent ID（可选，默认当前agent）
+            max_results: 最大结果数
+
+        Returns:
+            List[Dict[str, Any]]: 冷数据记忆列表
+        """
+        search_agent = agent_id or self.agent_id
+
+        self.cursor.execute(
+            """
+            SELECT id, content, content_summary, source_id, session_id,
+                   importance, importance_score, access_count, search_count,
+                   last_accessed_at, created_at, metadata, tags
+            FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND access_frozen = 0
+              AND access_count = 0
+              AND search_count = 0
+            ORDER BY last_accessed_at ASC
+            LIMIT ?
+            """,
+            (search_agent, max_results)
+        )
+
+        results = []
+        for row in self.cursor.fetchall():
+            results.append({
+                "id": row[0],
+                "content": row[1],
+                "content_summary": row[2],
+                "source_id": row[3],
+                "session_id": row[4],
+                "importance": row[5],
+                "importance_score": row[6],
+                "access_count": row[7],
+                "search_count": row[8],
+                "last_accessed_at": row[9],
+                "created_at": row[10],
+                "metadata": json.loads(row[11] or "{}"),
+                "tags": json.loads(row[12] or "[]"),
+                "is_cold": True
+            })
+        return results
+
+    def migrate_to_hot_storage(self, memory_ids: List[int]) -> int:
+        """将记忆迁移到热存储
+
+        Args:
+            memory_ids: 记忆ID列表
+
+        Returns:
+            int: 迁移的记忆数量
+        """
+        if not memory_ids:
+            return 0
+
+        with self._transaction():
+            placeholders = ','.join(['?'] * len(memory_ids))
+            self.cursor.execute(
+                f"""
+                UPDATE qwenpaw_memory
+                SET access_frozen = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders}) AND agent_id = ?
+                """,
+                memory_ids + [self.agent_id]
+            )
+            return self.cursor.rowcount
+
+    def migrate_to_cold_storage(self, memory_ids: List[int]) -> int:
+        """将记忆迁移到冷存储
+
+        Args:
+            memory_ids: 记忆ID列表
+
+        Returns:
+            int: 迁移的记忆数量
+        """
+        if not memory_ids:
+            return 0
+
+        with self._transaction():
+            placeholders = ','.join(['?'] * len(memory_ids))
+            self.cursor.execute(
+                f"""
+                UPDATE qwenpaw_memory
+                SET access_frozen = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders}) AND agent_id = ?
+                """,
+                memory_ids + [self.agent_id]
+            )
+            return self.cursor.rowcount
+
+    def get_storage_stats(self, agent_id: str = None) -> Dict[str, Any]:
+        """获取存储统计信息
+
+        Args:
+            agent_id: Agent ID（可选，默认当前agent）
+
+        Returns:
+            Dict[str, Any]: 存储统计信息
+        """
+        search_agent = agent_id or self.agent_id
+
+        # 总记忆数
+        self.cursor.execute("""
+            SELECT COUNT(*) FROM qwenpaw_memory 
+            WHERE agent_id = ? AND deleted_at IS NULL
+        """, (search_agent,))
+        total_memories = self.cursor.fetchone()[0]
+
+        # 热数据数
+        self.cursor.execute("""
+            SELECT COUNT(*) FROM qwenpaw_memory 
+            WHERE agent_id = ? AND deleted_at IS NULL 
+              AND access_frozen = 0 
+              AND (access_count > 0 OR search_count > 0)
+        """, (search_agent,))
+        hot_memories = self.cursor.fetchone()[0]
+
+        # 冷数据数
+        self.cursor.execute("""
+            SELECT COUNT(*) FROM qwenpaw_memory 
+            WHERE agent_id = ? AND deleted_at IS NULL 
+              AND access_frozen = 0 
+              AND access_count = 0 AND search_count = 0
+        """, (search_agent,))
+        cold_memories = self.cursor.fetchone()[0]
+
+        # 冷藏记忆数
+        self.cursor.execute("""
+            SELECT COUNT(*) FROM qwenpaw_memory 
+            WHERE agent_id = ? AND access_frozen = 1 AND deleted_at IS NULL
+        """, (search_agent,))
+        frozen_memories = self.cursor.fetchone()[0]
+
+        # 计算磁盘占用（估算）
+        self.cursor.execute("""
+            SELECT SUM(LENGTH(content)) FROM qwenpaw_memory 
+            WHERE agent_id = ? AND deleted_at IS NULL
+        """, (search_agent,))
+        total_size = self.cursor.fetchone()[0] or 0
+
+        return {
+            "total_memories": total_memories,
+            "hot_memories": hot_memories,
+            "cold_memories": cold_memories,
+            "frozen_memories": frozen_memories,
+            "estimated_size_bytes": total_size,
+            "estimated_size_kb": round(total_size / 1024, 2),
+            "estimated_size_mb": round(total_size / (1024 * 1024), 2)
+        }
 
     @contextmanager
     def _transaction(self):

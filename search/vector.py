@@ -3,12 +3,14 @@
 import logging
 import json
 import hashlib
+import heapq
+import random
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.2 bata0.1"
+__version__ = "1.0.2-beta0.3"
 
 
 class BaseVectorSearcher:
@@ -321,6 +323,304 @@ class VectorCache:
             self.db.clear_expired_cache()
 
 
+class HNSWLikeVectorSearcher(BaseVectorSearcher):
+    """
+    HNSW-like 向量搜索
+    
+    基于分层的类HNSW算法实现，用于高效的向量搜索
+    - 支持增量索引更新
+    - 支持多层索引结构
+    - 支持近似最近邻搜索
+    """
+    
+    def __init__(self, memory_manager, max_layers: int = 3, ef_construction: int = 100, m: int = 16):
+        super().__init__(memory_manager)
+        # HNSW 参数
+        self.max_layers = max_layers  # 最大层数
+        self.ef_construction = ef_construction  # 构建时的动态列表大小
+        self.m = m  # 每一层连接数
+        
+        # 索引结构
+        self._graph: Dict[int, Dict[int, List[int]]] = {}  # 邻近图
+        self._vectors: Dict[int, List[float]] = {}  # 向量存储
+        self._memory_ids: Dict[int, int] = {}  # 索引ID到记忆ID的映射
+        self._memory_id_to_idx: Dict[int, int] = {}  # 记忆ID到索引ID的映射
+        
+        # 层次信息
+        self._levels: Dict[int, int] = {}  # 每个节点的层数
+        self._entry_point: int = None  # 入口点
+        
+        # 索引状态
+        self._last_index_time = 0
+        self._index_interval = 5  # 索引更新间隔（秒）
+        self._index_version = 0  # 索引版本，用于增量更新
+        
+    def is_available(self) -> bool:
+        """检查是否可用"""
+        return self.db is not None
+    
+    def _tokenize(self, text: str) -> List[str]:
+        """分词"""
+        import re
+        tokens = re.findall(r'\w+', text.lower())
+        return [t for t in tokens if len(t) > 1]
+    
+    def _get_random_level(self) -> int:
+        """生成随机层数（指数衰减概率）"""
+        level = 0
+        while random.random() < 0.5 and level < self.max_layers - 1:
+            level += 1
+        return level
+    
+    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+        """计算余弦相似度"""
+        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        norm1 = sum(a * a for a in vec1) ** 0.5
+        norm2 = sum(b * b for b in vec2) ** 0.5
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        
+        return dot_product / (norm1 * norm2)
+    
+    def _build_vector(self, tokens: List[str], idf: Dict[str, float]) -> List[float]:
+        """构建向量"""
+        vector = []
+        for token in tokens:
+            tf = 1.0 / len(tokens) if tokens else 0
+            tfidf = tf * idf.get(token, 0)
+            vector.append(tfidf)
+        return vector
+    
+    def _search_layer(self, query_vec: List[float], entry_point: int, layer: int, ef: int) -> List[Tuple[int, float]]:
+        """在单层搜索"""
+        visited = {entry_point}
+        candidates = [(0, entry_point)]
+        results = []
+        
+        while candidates:
+            score, current = heapq.heappop(candidates)
+            
+            if len(results) >= ef:
+                break
+            
+            if current not in self._graph:
+                continue
+            
+            neighbors = self._graph.get(current, {}).get(layer, [])
+            
+            for neighbor in neighbors:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    
+                    if neighbor not in self._vectors:
+                        continue
+                    
+                    neighbor_vec = self._vectors[neighbor]
+                    score = self._cosine_similarity(query_vec, neighbor_vec)
+                    
+                    if len(results) < ef or score > results[0][0]:
+                        heapq.heappush(results, (score, neighbor))
+                        heapq.heappush(candidates, (-score, neighbor))
+        
+        # 返回按分数排序的结果
+        results.sort(key=lambda x: x[0], reverse=True)
+        return [(idx, score) for score, idx in results[:ef]]
+    
+    def _insert_element(self, memory_id: int, vector: List[float]):
+        """插入元素到索引"""
+        idx = len(self._vectors)
+        self._vectors[idx] = vector
+        self._memory_ids[idx] = memory_id
+        self._memory_id_to_idx[memory_id] = idx
+        
+        level = self._get_random_level()
+        self._levels[idx] = level
+        
+        if self._entry_point is None:
+            self._entry_point = idx
+            self._graph[idx] = {l: [] for l in range(level + 1)}
+            return
+        
+        # 找到所有层级的插入点
+        for layer in range(level, -1, -1):
+            search_results = self._search_layer(vector, self._entry_point, layer, self.ef_construction)
+            
+            if not search_results:
+                continue
+            
+            neighbors = [idx for idx, _ in search_results[:self.m]]
+            
+            if idx not in self._graph:
+                self._graph[idx] = {l: [] for l in range(level + 1)}
+            
+            # 更新连接
+            for neighbor in neighbors:
+                if neighbor not in self._graph:
+                    self._graph[neighbor] = {l: [] for l in range(self._levels.get(neighbor, 0) + 1)}
+                
+                for l in range(layer + 1):
+                    if l not in self._graph[idx]:
+                        self._graph[idx][l] = []
+                    if l not in self._graph[neighbor]:
+                        self._graph[neighbor][l] = []
+                    
+                    if idx not in self._graph[neighbor][l]:
+                        self._graph[neighbor][l].append(idx)
+                    if neighbor not in self._graph[idx][l]:
+                        self._graph[idx][l].append(neighbor)
+    
+    def _build_index(self, memories: List[Dict[str, Any]]):
+        """构建HNSW索引"""
+        if not memories:
+            return
+        
+        # 提取token并计算IDF
+        import re
+        all_tokens = []
+        token_docs = []
+        
+        for memory in memories:
+            tokens = self._tokenize(memory["content"])
+            all_tokens.extend(tokens)
+            token_docs.append(set(tokens))
+        
+        # 计算IDF
+        N = len(memories)
+        idf = {}
+        for token in set(all_tokens):
+            doc_count = sum(1 for doc in token_docs if token in doc)
+            idf[token] = max(1.0, (N - doc_count + 1) / (doc_count + 1))
+        
+        # 构建向量并插入
+        for memory in memories:
+            tokens = self._tokenize(memory["content"])
+            vector = self._build_vector(tokens, idf)
+            
+            if memory.get("id") is not None:
+                self._insert_element(memory["id"], vector)
+        
+        self._index_version += 1
+    
+    def _incremental_index_update(self, new_memories: List[Dict[str, Any]]):
+        """增量更新索引"""
+        if not new_memories:
+            return
+        
+        import re
+        all_tokens = []
+        token_docs = []
+        existing_ids = set(self._memory_id_to_idx.keys())
+        
+        for memory in new_memories:
+            memory_id = memory.get("id")
+            if memory_id and memory_id in existing_ids:
+                continue
+            
+            tokens = self._tokenize(memory["content"])
+            all_tokens.extend(tokens)
+            token_docs.append(set(tokens))
+        
+        if not all_tokens:
+            return
+        
+        N = len(self._vectors) + len(new_memories)
+        idf = {}
+        for token in set(all_tokens):
+            doc_count = sum(1 for doc in token_docs if token in doc)
+            idf[token] = max(1.0, (N - doc_count + 1) / (doc_count + 1))
+        
+        for memory in new_memories:
+            memory_id = memory.get("id")
+            if memory_id and memory_id not in existing_ids:
+                tokens = self._tokenize(memory["content"])
+                vector = self._build_vector(tokens, idf)
+                self._insert_element(memory_id, vector)
+        
+        self._index_version += 1
+    
+    async def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        include_frozen: bool = False
+    ) -> List[Dict[str, Any]]:
+        """HNSW-like 搜索"""
+        if not agent_id:
+            agent_id = self.memory_manager.agent_id
+        
+        # 获取记忆
+        memories = self._get_agent_memories(agent_id, include_frozen, session_id)
+        
+        if not memories:
+            return []
+        
+        # 检查是否需要更新索引
+        import time
+        current_time = time.time()
+        
+        if not self._vectors or current_time - self._last_index_time > self._index_interval:
+            # 全量构建
+            self._build_index(memories)
+            self._last_index_time = current_time
+        else:
+            # 增量更新
+            existing_ids = set(self._memory_id_to_idx.keys())
+            new_memories = [m for m in memories if m.get("id") not in existing_ids]
+            if new_memories:
+                self._incremental_index_update(new_memories)
+                self._last_index_time = current_time
+        
+        # 构建查询向量
+        tokens = self._tokenize(query)
+        all_tokens = []
+        for memory in memories:
+            all_tokens.extend(self._tokenize(memory["content"]))
+        
+        N = len(memories) + 1
+        idf = {}
+        for token in set(all_tokens):
+            doc_count = sum(1 for m in memories if token in self._tokenize(m["content"]))
+            idf[token] = max(1.0, (N - doc_count + 1) / (doc_count + 1))
+        
+        query_vec = self._build_vector(tokens, idf)
+        
+        if self._entry_point is None:
+            return []
+        
+        # 分层搜索
+        current = self._entry_point
+        for layer in range(self.max_layers - 1, -1, -1):
+            if current is not None:
+                candidates = self._search_layer(query_vec, current, layer, self.ef_construction)
+                if candidates:
+                    current = candidates[0][0]
+        
+        # 最终搜索
+        final_results = self._search_layer(query_vec, self._entry_point, 0, max_results)
+        
+        # 返回结果
+        results = []
+        memory_map = {m.get("id"): m for m in memories}
+        
+        for idx, score in final_results[:max_results]:
+            memory_id = self._memory_ids.get(idx)
+            if memory_id and memory_id in memory_map:
+                memory = memory_map[memory_id].copy()
+                memory["similarity"] = score
+                results.append(memory)
+        
+        # 更新搜索统计
+        if results:
+            memory_ids = [r["id"] for r in results]
+            scores = [r.get("similarity", 0) for r in results]
+            self.db.batch_update_memory_search(memory_ids, scores)
+        
+        return results
+
+
 class VectorSearcher:
     """
     向量搜索引擎
@@ -340,7 +640,7 @@ class VectorSearcher:
         
         Args:
             memory_manager: 记忆管理器
-            backend: 搜索后端 (tfidf, sqlite-vec)
+            backend: 搜索后端 (tfidf, hnsw-like)
             cache_enabled: 是否启用缓存
             cache_ttl: 缓存 TTL（秒）
         """
@@ -349,9 +649,12 @@ class VectorSearcher:
         self.cache_enabled = cache_enabled
         
         # 选择后端
-        if backend == "tfidf":
+        if backend == "hnsw-like":
+            self._searcher = HNSWLikeVectorSearcher(memory_manager)
+        elif backend == "tfidf":
             self._searcher = TFIDFVectorSearcher(memory_manager)
         else:
+            # 默认使用TF-IDF
             self._searcher = TFIDFVectorSearcher(memory_manager)
         
         # 初始化缓存
