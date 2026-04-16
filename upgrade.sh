@@ -9,7 +9,7 @@ echo "Human Thinking Memory Manager 升级脚本"
 echo "目标版本: 1.0.2-beta0.3"
 echo "=================================="
 
-# 检测当前目录
+# 获取脚本目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 查找Python
@@ -23,27 +23,119 @@ else
     exit 1
 fi
 
+# 自动查找QwenPaw根目录（与install.sh相同的逻辑）
+find_qwenpaw_root() {
+    local search_path="$1"
+
+    # 检查标准路径结构（QwenPaw源码目录）
+    check_standard_layout() {
+        local path="$1"
+        if [ -d "$path/src/qwenpaw" ] && [ -f "$path/pyproject.toml" ]; then
+            echo "$path"
+            return 0
+        fi
+        return 1
+    }
+
+    # 如果直接传入的是有效路径
+    if [ -d "$search_path/src/qwenpaw" ] && [ -f "$search_path/pyproject.toml" ]; then
+        echo "$search_path"
+        return 0
+    fi
+
+    # 向上搜索（最多5层）
+    local current_path="$search_path"
+    for i in {1..5}; do
+        if check_standard_layout "$current_path"; then
+            echo "$current_path"
+            return 0
+        fi
+        current_path="$(dirname "$current_path")"
+    done
+
+    # 尝试环境变量
+    if [ -n "$QWENPAW_WORKING_DIR" ] && [ -d "$QWENPAW_WORKING_DIR" ]; then
+        local src_path="$QWENPAW_WORKING_DIR"
+        for i in {1..3}; do
+            if check_standard_layout "$src_path"; then
+                echo "$src_path"
+                return 0
+            fi
+            src_path="$(dirname "$src_path")"
+        done
+    fi
+
+    if [ -n "$QWENPAW_ROOT" ] && [ -d "$QWENPAW_ROOT/src/qwenpaw" ]; then
+        echo "$QWENPAW_ROOT"
+        return 0
+    fi
+
+    # 尝试常见位置
+    local common_paths=(
+        "$HOME/.qwenpaw"
+        "$HOME/.copaw"
+        "$HOME/QwenPaw"
+        "$HOME/qwenpaw"
+        "$HOME/projects/qwenpaw"
+        "/opt/QwenPaw"
+        "/opt/qwenpaw"
+        "/root/QwenPaw"
+        "/root/qwenpaw"
+        "/usr/local/QwenPaw"
+        "/usr/local/qwenpaw"
+    )
+
+    for path in "${common_paths[@]}"; do
+        if check_standard_layout "$path"; then
+            echo "$path"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 # 检测QwenPaw路径
 QWENPAW_PATH=""
-if [ -d "$SCRIPT_DIR/../../../src/qwenpaw" ]; then
-    QWENPAW_PATH="$SCRIPT_DIR/../../../"
-elif [ -d "$SCRIPT_DIR/../../src/qwenpaw" ]; then
-    QWENPAW_PATH="$SCRIPT_DIR/../../"
-elif [ -d "$SCRIPT_DIR/../src/qwenpaw" ]; then
-    QWENPAW_PATH="$SCRIPT_DIR/../"
+
+# 首先检查当前目录
+if [ -d "./src/qwenpaw" ] && [ -f "./pyproject.toml" ]; then
+    QWENPAW_PATH="$(pwd)"
+    echo "在当前目录找到QwenPaw: $QWENPAW_PATH"
+else
+    # 在脚本目录向上搜索
+    QWENPAW_PATH=$(find_qwenpaw_root "$SCRIPT_DIR")
 fi
 
+if [ -z "$QWENPAW_PATH" ]; then
+    echo ""
+    echo "未找到QwenPaw目录，将只执行本地升级"
+    echo ""
+    QWENPAW_PATH=""
+else
+    echo "找到QwenPaw: $QWENPAW_PATH"
+fi
 
 # 查找数据库文件
 DB_PATH=""
 if [ -n "$QWENPAW_PATH" ]; then
     # 在QwenPaw工作目录中查找
-    for db in "$QWENPAW_PATH"/*/memory/human_thinking_memory_*.db; do
+    for db in "$QWENPAW_PATH"/.qwenpaw/memory/human_thinking_memory_*.db; do
         if [ -f "$db" ]; then
             DB_PATH="$db"
             break
         fi
     done
+
+    # 尝试旧版本路径
+    if [ -z "$DB_PATH" ]; then
+        for db in "$QWENPAW_PATH"/memory/human_thinking_memory_*.db; do
+            if [ -f "$db" ]; then
+                DB_PATH="$db"
+                break
+            fi
+        done
+    fi
 fi
 
 # 交互式输入数据库路径
@@ -123,6 +215,9 @@ if [ -n "$QWENPAW_PATH" ]; then
     echo "已安装到 QwenPaw tools 目录: $TOOLS_DIR"
 else
     echo "未找到 QwenPaw 目录，跳过安装"
+    echo ""
+    echo "如需手动安装到QwenPaw，请运行:"
+    echo "   bash install.sh"
 fi
 
 echo ""
