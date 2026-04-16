@@ -295,20 +295,92 @@ class HumanThinkingMemoryDB:
                 VALUES (?, ?, ?)
             """, (CURRENT_DB_VERSION, CURRENT_DB_VERSION, "1.0.0"))
 
-    def get_hot_memories(self, agent_id: str = None, max_results: int = 100) -> List[Dict[str, Any]]:
-        """获取热数据（高访问频率的记忆）
+    def calculate_memory_temperature(self, memory: Dict[str, Any]) -> float:
+        """计算记忆温度
+
+        综合考虑访问频率、重要性等级和时间衰减来计算记忆温度
+
+        记忆温度 = 访问频率权重 * 0.3 + 重要性权重 * 0.4 + 时间衰减权重 * 0.3
+
+        Args:
+            memory: 记忆字典
+
+        Returns:
+            float: 记忆温度 (0.0 - 1.0)
+        """
+        from datetime import datetime
+
+        # 访问频率权重（最高0.3）
+        access_count = memory.get('access_count', 0)
+        search_count = memory.get('search_count', 0)
+        access_weight = min((access_count + search_count) / 10.0, 1.0) * 0.3
+
+        # 重要性权重（最高0.4）
+        importance = memory.get('importance', 3)
+        importance_weight = (importance / 5.0) * 0.4
+
+        # 时间衰减权重（最高0.3）
+        time_weight = 0.3
+        created_at = memory.get('created_at')
+        if created_at:
+            try:
+                if isinstance(created_at, str):
+                    memory_time = datetime.fromisoformat(created_at)
+                else:
+                    memory_time = created_at
+
+                time_diff = (datetime.now() - memory_time).total_seconds() / 3600  # 小时
+                # 时间衰减函数：1/(1+time_diff/168)，7天后权重降为0.5
+                time_weight = 1 / (1 + time_diff / 168) * 0.3
+            except:
+                pass
+
+        temperature = access_weight + importance_weight + time_weight
+        return round(temperature, 3)
+
+    def is_pinned_memory(self, memory: Dict[str, Any]) -> bool:
+        """判断记忆是否为固定记忆
+
+        固定记忆不会被自动降级，包括：
+        - importance = 5 的记忆
+        - metadata 中标记为 pinned: true 的记忆
+
+        Args:
+            memory: 记忆字典
+
+        Returns:
+            bool: 是否为固定记忆
+        """
+        if memory.get('importance', 3) >= 5:
+            return True
+
+        metadata = memory.get('metadata', {})
+        if isinstance(metadata, dict) and metadata.get('pinned', False):
+            return True
+
+        return False
+
+    def get_hot_memories(self, agent_id: str = None, max_results: int = 100,
+                        include_pinned: bool = True) -> List[Dict[str, Any]]:
+        """获取热数据（高温度的记忆）
+
+        热数据包括：
+        - 固定记忆（重要性=5或标记为pinned）永远在热数据中
+        - 温度 > 0.5 的普通记忆
+        - 最近7天内访问过的记忆
 
         Args:
             agent_id: Agent ID（可选，默认当前agent）
             max_results: 最大结果数
+            include_pinned: 是否包含固定记忆
 
         Returns:
             List[Dict[str, Any]]: 热数据记忆列表
         """
         search_agent = agent_id or self.agent_id
 
-        self.cursor.execute(
-            """
+        # 构建查询，同时考虑固定记忆和温度
+        sql = """
             SELECT id, content, content_summary, source_id, session_id,
                    importance, importance_score, access_count, search_count,
                    last_accessed_at, created_at, metadata, tags
@@ -316,16 +388,24 @@ class HumanThinkingMemoryDB:
             WHERE agent_id = ?
               AND deleted_at IS NULL
               AND access_frozen = 0
-              AND (access_count > 0 OR search_count > 0)
-            ORDER BY (access_count * 0.5 + search_count * 1.0) DESC, last_accessed_at DESC
+              AND (
+                  importance >= 5
+                  OR json_extract(metadata, '$.pinned') = 1
+                  OR last_accessed_at >= datetime('now', '-7 days')
+                  OR (access_count > 0 OR search_count > 0)
+              )
+            ORDER BY
+                CASE WHEN importance >= 5 OR json_extract(metadata, '$.pinned') = 1 THEN 1 ELSE 0 END DESC,
+                (access_count * 0.5 + search_count * 1.0) DESC,
+                last_accessed_at DESC
             LIMIT ?
-            """,
-            (search_agent, max_results)
-        )
+        """
+
+        self.cursor.execute(sql, (search_agent, max_results))
 
         results = []
         for row in self.cursor.fetchall():
-            results.append({
+            memory = {
                 "id": row[0],
                 "content": row[1],
                 "content_summary": row[2],
@@ -338,13 +418,77 @@ class HumanThinkingMemoryDB:
                 "last_accessed_at": row[9],
                 "created_at": row[10],
                 "metadata": json.loads(row[11] or "{}"),
-                "tags": json.loads(row[12] or "[]"),
-                "is_hot": True
-            })
+                "tags": json.loads(row[12] or "[]")
+            }
+            memory['temperature'] = self.calculate_memory_temperature(memory)
+            memory['is_pinned'] = self.is_pinned_memory(memory)
+            memory['is_hot'] = True
+            results.append(memory)
+        return results
+
+    def get_warm_memories(self, agent_id: str = None, max_results: int = 100) -> List[Dict[str, Any]]:
+        """获取温数据记忆
+
+        温数据：0.2 < 温度 <= 0.5 的记忆
+
+        Args:
+            agent_id: Agent ID（可选，默认当前agent）
+            max_results: 最大结果数
+
+        Returns:
+            List[Dict[str, Any]]: 温数据记忆列表
+        """
+        search_agent = agent_id or self.agent_id
+
+        # 温数据：非固定记忆，有访问但温度不是很高
+        sql = """
+            SELECT id, content, content_summary, source_id, session_id,
+                   importance, importance_score, access_count, search_count,
+                   last_accessed_at, created_at, metadata, tags
+            FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND access_frozen = 0
+              AND importance < 5
+              AND json_extract(metadata, '$.pinned') != 1
+              AND (access_count > 0 OR search_count > 0)
+            ORDER BY importance DESC, last_accessed_at DESC
+            LIMIT ?
+        """
+
+        self.cursor.execute(sql, (search_agent, max_results))
+
+        results = []
+        for row in self.cursor.fetchall():
+            memory = {
+                "id": row[0],
+                "content": row[1],
+                "content_summary": row[2],
+                "source_id": row[3],
+                "session_id": row[4],
+                "importance": row[5],
+                "importance_score": row[6],
+                "access_count": row[7],
+                "search_count": row[8],
+                "last_accessed_at": row[9],
+                "created_at": row[10],
+                "metadata": json.loads(row[11] or "{}"),
+                "tags": json.loads(row[12] or "[]")
+            }
+            memory['temperature'] = self.calculate_memory_temperature(memory)
+            memory['is_pinned'] = False
+            memory['is_warm'] = True
+            results.append(memory)
         return results
 
     def get_cold_memories(self, agent_id: str = None, max_results: int = 100) -> List[Dict[str, Any]]:
-        """获取冷数据（低访问频率的记忆）
+        """获取冷数据（低温度的记忆）
+
+        冷数据：温度 <= 0.2 且非固定记忆
+
+        注意：冷数据是"存储分层"概念，与"冷藏(frozen)"不同
+        - 冷数据：未被频繁访问的记忆，仍在数据库中，可正常访问
+        - 冷藏记忆：明确标记为"遗忘"状态，需要解冻才能访问
 
         Args:
             agent_id: Agent ID（可选，默认当前agent）
@@ -364,6 +508,8 @@ class HumanThinkingMemoryDB:
             WHERE agent_id = ?
               AND deleted_at IS NULL
               AND access_frozen = 0
+              AND importance < 5
+              AND json_extract(metadata, '$.pinned') != 1
               AND access_count = 0
               AND search_count = 0
             ORDER BY last_accessed_at ASC
@@ -374,7 +520,7 @@ class HumanThinkingMemoryDB:
 
         results = []
         for row in self.cursor.fetchall():
-            results.append({
+            memory = {
                 "id": row[0],
                 "content": row[1],
                 "content_summary": row[2],
@@ -387,13 +533,128 @@ class HumanThinkingMemoryDB:
                 "last_accessed_at": row[9],
                 "created_at": row[10],
                 "metadata": json.loads(row[11] or "{}"),
-                "tags": json.loads(row[12] or "[]"),
-                "is_cold": True
-            })
+                "tags": json.loads(row[12] or "[]")
+            }
+            memory['temperature'] = self.calculate_memory_temperature(memory)
+            memory['is_pinned'] = False
+            memory['is_cold'] = True
+            results.append(memory)
+        return results
+
+    def pin_memory(self, memory_id: int) -> bool:
+        """固定记忆
+
+        固定记忆不会被自动降级为冷数据，也不会被自动冷藏
+
+        Args:
+            memory_id: 记忆ID
+
+        Returns:
+            bool: 是否成功
+        """
+        with self._transaction():
+            metadata = {}
+            self.cursor.execute(
+                "SELECT metadata FROM qwenpaw_memory WHERE id = ?",
+                (memory_id,)
+            )
+            row = self.cursor.fetchone()
+            if row:
+                metadata = json.loads(row[0] or "{}")
+
+            metadata['pinned'] = True
+
+            self.cursor.execute(
+                """
+                UPDATE qwenpaw_memory
+                SET metadata = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (json.dumps(metadata), memory_id)
+            )
+            return self.cursor.rowcount > 0
+
+    def unpin_memory(self, memory_id: int) -> bool:
+        """取消固定记忆
+
+        Args:
+            memory_id: 记忆ID
+
+        Returns:
+            bool: 是否成功
+        """
+        with self._transaction():
+            self.cursor.execute(
+                "SELECT metadata FROM qwenpaw_memory WHERE id = ?",
+                (memory_id,)
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return False
+
+            metadata = json.loads(row[0] or "{}")
+            metadata.pop('pinned', None)
+
+            self.cursor.execute(
+                """
+                UPDATE qwenpaw_memory
+                SET metadata = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (json.dumps(metadata), memory_id)
+            )
+            return self.cursor.rowcount > 0
+
+    def get_pinned_memories(self, agent_id: str = None) -> List[Dict[str, Any]]:
+        """获取所有固定记忆
+
+        Args:
+            agent_id: Agent ID（可选，默认当前agent）
+
+        Returns:
+            List[Dict[str, Any]]: 固定记忆列表
+        """
+        search_agent = agent_id or self.agent_id
+
+        self.cursor.execute(
+            """
+            SELECT id, content, content_summary, source_id, session_id,
+                   importance, importance_score, access_count, search_count,
+                   last_accessed_at, created_at, metadata, tags
+            FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND access_frozen = 0
+              AND (importance >= 5 OR json_extract(metadata, '$.pinned') = 1)
+            ORDER BY importance DESC, last_accessed_at DESC
+            """,
+            (search_agent,)
+        )
+
+        results = []
+        for row in self.cursor.fetchall():
+            memory = {
+                "id": row[0],
+                "content": row[1],
+                "content_summary": row[2],
+                "source_id": row[3],
+                "session_id": row[4],
+                "importance": row[5],
+                "importance_score": row[6],
+                "access_count": row[7],
+                "search_count": row[8],
+                "last_accessed_at": row[9],
+                "created_at": row[10],
+                "metadata": json.loads(row[11] or "{}"),
+                "tags": json.loads(row[12] or "[]")
+            }
+            memory['temperature'] = self.calculate_memory_temperature(memory)
+            memory['is_pinned'] = True
+            results.append(memory)
         return results
 
     def migrate_to_hot_storage(self, memory_ids: List[int]) -> int:
-        """将记忆迁移到热存储
+        """将记忆迁移到热存储（仅重置访问状态，不影响固定标记）
 
         Args:
             memory_ids: 记忆ID列表
@@ -417,7 +678,9 @@ class HumanThinkingMemoryDB:
             return self.cursor.rowcount
 
     def migrate_to_cold_storage(self, memory_ids: List[int]) -> int:
-        """将记忆迁移到冷存储
+        """将记忆迁移到冷存储（仅影响存储策略，不影响固定标记）
+
+        注意：此方法不会设置 access_frozen=1，冷藏记忆不受此影响
 
         Args:
             memory_ids: 记忆ID列表
@@ -428,13 +691,17 @@ class HumanThinkingMemoryDB:
         if not memory_ids:
             return 0
 
+        # 冷存储只是标记，不设置 access_frozen
+        # 固定记忆不受此操作影响
         with self._transaction():
             placeholders = ','.join(['?'] * len(memory_ids))
             self.cursor.execute(
                 f"""
                 UPDATE qwenpaw_memory
-                SET access_frozen = 1, updated_at = CURRENT_TIMESTAMP
-                WHERE id IN ({placeholders}) AND agent_id = ?
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE id IN ({placeholders})
+                  AND agent_id = ?
+                  AND (importance < 5 AND json_extract(metadata, '$.pinned') != 1)
                 """,
                 memory_ids + [self.agent_id]
             )
@@ -453,39 +720,71 @@ class HumanThinkingMemoryDB:
 
         # 总记忆数
         self.cursor.execute("""
-            SELECT COUNT(*) FROM qwenpaw_memory 
+            SELECT COUNT(*) FROM qwenpaw_memory
             WHERE agent_id = ? AND deleted_at IS NULL
         """, (search_agent,))
         total_memories = self.cursor.fetchone()[0]
 
-        # 热数据数
+        # 热数据数（包含固定记忆）
         self.cursor.execute("""
-            SELECT COUNT(*) FROM qwenpaw_memory 
-            WHERE agent_id = ? AND deleted_at IS NULL 
-              AND access_frozen = 0 
-              AND (access_count > 0 OR search_count > 0)
+            SELECT COUNT(*) FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND access_frozen = 0
+              AND (
+                  importance >= 5
+                  OR json_extract(metadata, '$.pinned') = 1
+                  OR last_accessed_at >= datetime('now', '-7 days')
+                  OR (access_count > 0 OR search_count > 0)
+              )
         """, (search_agent,))
         hot_memories = self.cursor.fetchone()[0]
 
+        # 温数据数
+        self.cursor.execute("""
+            SELECT COUNT(*) FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND access_frozen = 0
+              AND importance < 5
+              AND json_extract(metadata, '$.pinned') != 1
+              AND (access_count > 0 OR search_count > 0)
+        """, (search_agent,))
+        warm_memories = self.cursor.fetchone()[0]
+
         # 冷数据数
         self.cursor.execute("""
-            SELECT COUNT(*) FROM qwenpaw_memory 
-            WHERE agent_id = ? AND deleted_at IS NULL 
-              AND access_frozen = 0 
-              AND access_count = 0 AND search_count = 0
+            SELECT COUNT(*) FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND access_frozen = 0
+              AND importance < 5
+              AND json_extract(metadata, '$.pinned') != 1
+              AND access_count = 0
+              AND search_count = 0
         """, (search_agent,))
         cold_memories = self.cursor.fetchone()[0]
 
+        # 固定记忆数
+        self.cursor.execute("""
+            SELECT COUNT(*) FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND access_frozen = 0
+              AND (importance >= 5 OR json_extract(metadata, '$.pinned') = 1)
+        """, (search_agent,))
+        pinned_memories = self.cursor.fetchone()[0]
+
         # 冷藏记忆数
         self.cursor.execute("""
-            SELECT COUNT(*) FROM qwenpaw_memory 
+            SELECT COUNT(*) FROM qwenpaw_memory
             WHERE agent_id = ? AND access_frozen = 1 AND deleted_at IS NULL
         """, (search_agent,))
         frozen_memories = self.cursor.fetchone()[0]
 
         # 计算磁盘占用（估算）
         self.cursor.execute("""
-            SELECT SUM(LENGTH(content)) FROM qwenpaw_memory 
+            SELECT SUM(LENGTH(content)) FROM qwenpaw_memory
             WHERE agent_id = ? AND deleted_at IS NULL
         """, (search_agent,))
         total_size = self.cursor.fetchone()[0] or 0
@@ -493,7 +792,9 @@ class HumanThinkingMemoryDB:
         return {
             "total_memories": total_memories,
             "hot_memories": hot_memories,
+            "warm_memories": warm_memories,
             "cold_memories": cold_memories,
+            "pinned_memories": pinned_memories,
             "frozen_memories": frozen_memories,
             "estimated_size_bytes": total_size,
             "estimated_size_kb": round(total_size / 1024, 2),
