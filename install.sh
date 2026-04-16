@@ -7,9 +7,48 @@ set -e
 
 echo "=== Human Thinking Memory Manager 安装脚本 ==="
 
-# 获取脚本目录
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-echo "脚本目录: $SCRIPT_DIR"
+# 判断运行模式：管道模式还是文件模式
+PIPE_MODE=0
+if [ "$0" = "bash" ] || [ "$0" = "-bash" ] || [ "$0" = "/dev/fd/63" ] || [ ! -f "$0" ]; then
+    PIPE_MODE=1
+    echo "检测到管道运行模式"
+fi
+
+# 获取脚本目录或临时目录
+if [ $PIPE_MODE -eq 1 ]; then
+    # 管道模式：创建临时目录
+    SCRIPT_DIR=$(mktemp -d -t qwenpaw-hmm-XXXXXX)
+    echo "使用临时目录: $SCRIPT_DIR"
+    cleanup() {
+        rm -rf "$SCRIPT_DIR"
+    }
+    trap cleanup EXIT
+    
+    # 下载完整仓库
+    echo "正在下载 Human Thinking Memory Manager..."
+    if command -v git &> /dev/null; then
+        git clone --depth 1 https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager.git "$SCRIPT_DIR"
+    else
+        # 如果没有git，使用curl下载tar.gz
+        if command -v curl &> /dev/null; then
+            curl -L https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/archive/refs/heads/main.tar.gz -o "$SCRIPT_DIR/repo.tar.gz"
+            tar -xzf "$SCRIPT_DIR/repo.tar.gz" -C "$SCRIPT_DIR" --strip-components 1
+            rm "$SCRIPT_DIR/repo.tar.gz"
+        elif command -v wget &> /dev/null; then
+            wget -O "$SCRIPT_DIR/repo.tar.gz" https://github.com/kingsa2026/QwenPaw_HumanThinkingMemoryManager/archive/refs/heads/main.tar.gz
+            tar -xzf "$SCRIPT_DIR/repo.tar.gz" -C "$SCRIPT_DIR" --strip-components 1
+            rm "$SCRIPT_DIR/repo.tar.gz"
+        else
+            echo "错误: 既没有git，也没有curl或wget，请先下载仓库再运行"
+            exit 1
+        fi
+    fi
+    echo "下载完成"
+else
+    # 文件模式：正常获取脚本目录
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    echo "脚本目录: $SCRIPT_DIR"
+fi
 
 # 自动查找QwenPaw根目录
 find_qwenpaw_root() {
@@ -95,7 +134,7 @@ else
         QwenPaw_PATH="$(pwd)"
         echo "在当前目录找到QwenPaw: $QwenPaw_PATH"
     else
-        QwenPaw_PATH=$(find_qwenpaw_root "$SCRIPT_DIR")
+        QwenPaw_PATH=$(find_qwenpaw_root "$(pwd)")
         if [ -z "$QwenPaw_PATH" ]; then
             echo "错误: 无法找到QwenPaw根目录"
             echo ""
@@ -104,14 +143,10 @@ else
             echo "   cd /path/to/QwenPaw"
             echo "   bash /path/to/install.sh"
             echo ""
-            echo "2. 将HumanThinkingMemoryManager复制到QwenPaw后运行:"
-            echo "   cp -r HumanThinkingMemoryManager QwenPaw/src/qwenpaw/agents/tools/"
-            echo "   cd QwenPaw && bash src/qwenpaw/agents/tools/HumanThinkingMemoryManager/install.sh"
-            echo ""
-            echo "3. 使用命令行参数指定路径:"
+            echo "2. 使用命令行参数指定路径:"
             echo "   bash install.sh /path/to/QwenPaw"
             echo ""
-            echo "4. 设置环境变量:"
+            echo "3. 设置环境变量:"
             echo "   export QWENPAW_ROOT=/path/to/QwenPaw"
             echo "   bash install.sh"
             exit 1
