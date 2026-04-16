@@ -277,7 +277,6 @@ if match:
 else:
     print("   ⚠ 未找到 _resolve_memory_class 函数")
 PYTHON_SCRIPT
-    python3 - "$WORKSPACE_FILE"
 fi
 
 # 3. 更新 config.py 文件，添加 human_thinking 选项
@@ -325,20 +324,71 @@ PYTHON_SCRIPT
 fi
 
 echo ""
+echo "4. 配置 QwenPaw 使用 HumanThinkingMemoryManager..."
+
+# 查找config.json位置
+CONFIG_JSON=""
+if [ -n "$QWENPAW_PATH" ] && [ -f "$QWENPAW_PATH/config.json" ]; then
+    CONFIG_JSON="$QWENPAW_PATH/config.json"
+elif [ -f "$HOME/.qwenpaw/config.json" ]; then
+    CONFIG_JSON="$HOME/.qwenpaw/config.json"
+elif [ -f "/root/.qwenpaw/config.json" ]; then
+    CONFIG_JSON="/root/.qwenpaw/config.json"
+fi
+
+if [ -n "$CONFIG_JSON" ] && [ -f "$CONFIG_JSON" ]; then
+    echo "   找到配置文件: $CONFIG_JSON"
+    
+    # 使用Python更新config.json
+    CONFIG_JSON="$CONFIG_JSON" python3 << 'PYTHON_SCRIPT'
+import os
+import json
+
+config_path = os.environ['CONFIG_JSON']
+
+# 读取配置文件
+with open(config_path, 'r', encoding='utf-8') as f:
+    config = json.load(f)
+
+# 更新memory_manager_backend配置
+updated = False
+if 'agents' not in config:
+    config['agents'] = {}
+
+if 'running' not in config['agents']:
+    config['agents']['running'] = {}
+
+if config['agents']['running'].get('memory_manager_backend') != 'human_thinking':
+    config['agents']['running']['memory_manager_backend'] = 'human_thinking'
+    updated = True
+
+# 如果已更新，保存配置文件
+if updated:
+    # 备份原配置文件
+    backup_path = config_path + '.bak'
+    with open(backup_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    print("   ✓ 已自动配置 memory_manager_backend 为 human_thinking")
+else:
+    print("   ✓ 配置文件已经是 human_thinking 模式")
+PYTHON_SCRIPT
+else
+    echo "   ⚠ 未找到config.json，请手动配置"
+    echo "   在 config.json 中添加:"
+    echo "   {\"agents\": {\"running\": {\"memory_manager_backend\": \"human_thinking\"}}}"
+fi
+
+echo ""
 echo "=========================================="
 echo "✓ 安装完成！"
 echo "=========================================="
 echo ""
 echo "Human Thinking Memory Manager 已成功集成到 QwenPaw 中"
+echo "配置文件已自动更新为使用 human_thinking 模式"
 echo ""
-echo "使用方法："
-echo "1. 在 config.json 或 workspace/agent.json 中设置："
-echo "   \"memory_manager_backend\": \"human_thinking\""
-echo ""
-echo "2. 重启 QwenPaw 服务以应用更改"
-echo ""
-echo "注意："
-echo "- 默认为 \"remelight\"，如需使用 HumanThinkingMemoryManager，请手动修改配置"
-echo "- 如果导入失败，会自动回退到默认的 ReMeLightMemoryManager"
+echo "请重启 QwenPaw 服务以应用更改"
 echo ""
 echo "=========================================="
