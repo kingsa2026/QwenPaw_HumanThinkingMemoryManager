@@ -54,24 +54,15 @@ fi
 find_qwenpaw_root() {
     local search_path="$1"
     
-    # 检查标准路径结构（QwenPaw源码目录）
-    check_standard_layout() {
-        local path="$1"
-        if [ -d "$path/src/qwenpaw" ] && [ -f "$path/pyproject.toml" ]; then
-            return 0
-        fi
-        return 1
-    }
-
     # 1. 首先检查当前目录
-    if check_standard_layout "$(pwd)"; then
+    if [ -d "$(pwd)/src/qwenpaw" ] && [ -f "$(pwd)/pyproject.toml" ]; then
         echo "$(pwd)"
         return 0
     fi
 
     # 2. 如果传入了搜索路径，先检查它
     if [ -n "$search_path" ] && [ -d "$search_path" ]; then
-        if check_standard_layout "$search_path"; then
+        if [ -d "$search_path/src/qwenpaw" ] && [ -f "$search_path/pyproject.toml" ]; then
             echo "$search_path"
             return 0
         fi
@@ -79,7 +70,7 @@ find_qwenpaw_root() {
 
     # 3. 尝试环境变量 QWENPAW_ROOT（优先级最高）
     if [ -n "$QWENPAW_ROOT" ]; then
-        if check_standard_layout "$QWENPAW_ROOT"; then
+        if [ -d "$QWENPAW_ROOT/src/qwenpaw" ] && [ -f "$QWENPAW_ROOT/pyproject.toml" ]; then
             echo "$QWENPAW_ROOT"
             return 0
         fi
@@ -87,60 +78,54 @@ find_qwenpaw_root() {
 
     # 4. 尝试环境变量 QWENPAW_WORKING_DIR
     if [ -n "$QWENPAW_WORKING_DIR" ]; then
-        if check_standard_layout "$QWENPAW_WORKING_DIR"; then
+        if [ -d "$QWENPAW_WORKING_DIR/src/qwenpaw" ] && [ -f "$QWENPAW_WORKING_DIR/pyproject.toml" ]; then
             echo "$QWENPAW_WORKING_DIR"
             return 0
         fi
         # 尝试向上查找2层
         local src_path="$QWENPAW_WORKING_DIR"
-        for i in {1..2}; do
+        local i=0
+        while [ $i -lt 2 ]; do
             src_path="$(dirname "$src_path")"
             if [ "$src_path" = "/" ]; then
                 break
             fi
-            if check_standard_layout "$src_path"; then
+            if [ -d "$src_path/src/qwenpaw" ] && [ -f "$src_path/pyproject.toml" ]; then
                 echo "$src_path"
                 return 0
             fi
+            i=$((i + 1))
         done
     fi
 
     # 5. 尝试常见位置（快速检查）
-    local common_paths=(
-        "$HOME/.qwenpaw"
-        "$HOME/.copaw"
-        "$HOME/QwenPaw"
-        "$HOME/qwenpaw"
-        "/opt/QwenPaw"
-        "/opt/qwenpaw"
-        "/root/QwenPaw"
-        "/root/qwenpaw"
-    )
+    local common_paths="$HOME/.qwenpaw $HOME/.copaw $HOME/QwenPaw $HOME/qwenpaw /opt/QwenPaw /opt/qwenpaw /root/QwenPaw /root/qwenpaw"
 
-    for path in "${common_paths[@]}"; do
-        if [ -d "$path" ]; then
-            if check_standard_layout "$path"; then
-                echo "$path"
-                return 0
-            fi
+    for path in $common_paths; do
+        if [ -d "$path/src/qwenpaw" ] && [ -f "$path/pyproject.toml" ]; then
+            echo "$path"
+            return 0
         fi
     done
 
     # 6. 向上搜索（最多3层，避免卡住）
     if [ -n "$search_path" ] && [ -d "$search_path" ]; then
         local current_path="$search_path"
-        for i in {1..3}; do
+        local i=0
+        while [ $i -lt 3 ]; do
             current_path="$(dirname "$current_path")"
             if [ "$current_path" = "/" ]; then
                 break
             fi
-            if check_standard_layout "$current_path"; then
+            if [ -d "$current_path/src/qwenpaw" ] && [ -f "$current_path/pyproject.toml" ]; then
                 echo "$current_path"
                 return 0
             fi
+            i=$((i + 1))
         done
     fi
 
+    # 未找到
     return 1
 }
 
