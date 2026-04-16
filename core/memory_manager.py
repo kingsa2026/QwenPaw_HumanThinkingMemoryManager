@@ -767,6 +767,95 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
                 content=[TextBlock(type="text", text=f"Failed to get related memories: {e}")],
             )
 
+    async def store_feishu_memory(
+        self,
+        content: str,
+        source_id: str = "feishu",
+        session_id: Optional[str] = None,
+        importance: int = 3,
+        message_id: Optional[str] = None,
+        reply_to_id: Optional[str] = None,
+        root_id: Optional[str] = None,
+        mentions: Optional[List[str]] = None,
+        is_quote: bool = False,
+        quote_original: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> int:
+        """Store a Feishu message as memory with enhanced metadata.
+
+        This method specifically handles Feishu messages, extracting and storing:
+        - Reply chain information (reply_to_id, root_id)
+        - @mentions
+        - Quote information
+        - Message type
+
+        Args:
+            content: Memory content (will be parsed if Feishu JSON format).
+            source_id: Source identifier (default: 'feishu').
+            session_id: Session identifier.
+            importance: Importance level (1-5).
+            message_id: Feishu message ID.
+            reply_to_id: ID of the message being replied to.
+            root_id: Root message ID in the thread.
+            mentions: List of mentioned user names.
+            is_quote: Whether this is a quote/reply message.
+            quote_original: Original quoted content.
+            metadata: Additional metadata.
+
+        Returns:
+            int: Memory ID (temporary ID for batch processing).
+        """
+        try:
+            # Import here to avoid circular dependency
+            from hooks.feishu_message_parser import (
+                parse_feishu_content,
+                is_important_feishu_message,
+                FeishuMessageInfo
+            )
+
+            # Parse Feishu content if it's JSON format
+            parsed_content = parse_feishu_content(content)
+            if parsed_content:
+                content = parsed_content
+
+            # Auto-detect importance for important messages
+            if is_important_feishu_message(content):
+                importance = max(importance, 4)  # At least 4 for important messages
+
+            # Build Feishu-specific metadata
+            feishu_metadata = {
+                "message_id": message_id,
+                "reply_to_id": reply_to_id,
+                "root_id": root_id,
+                "mentions": mentions or [],
+                "is_quote": is_quote,
+                "quote_original": quote_original,
+                "source_type": "feishu"
+            }
+
+            # Merge with additional metadata
+            if metadata:
+                feishu_metadata.update(metadata)
+
+            return await self.store_memory(
+                content=content,
+                source_id=source_id,
+                session_id=session_id,
+                importance=importance,
+                metadata=feishu_metadata
+            )
+
+        except ImportError:
+            # Fallback to regular store_memory if parser not available
+            logger.warning("Feishu message parser not available, using default storage")
+            return await self.store_memory(
+                content=content,
+                source_id=source_id,
+                session_id=session_id,
+                importance=importance,
+                metadata=metadata
+            )
+
     async def store_memory(self, content: str, source_id: str = "system",
                          session_id: Optional[str] = None, importance: int = 3,
                          metadata: Optional[dict] = None) -> int:
