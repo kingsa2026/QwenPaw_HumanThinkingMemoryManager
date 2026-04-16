@@ -138,6 +138,17 @@ else
     # Use || true to prevent set -e from exiting when function returns non-zero
     QwenPaw_PATH=$(find_qwenpaw_root "$(pwd)") || true
     
+    # 如果没找到源码目录，尝试查找pip安装的QwenPaw
+    if [ -z "$QwenPaw_PATH" ]; then
+        echo "未找到QwenPaw源码目录，正在查找pip安装的QwenPaw..."
+        QwenPaw_PATH=$(python3 -c "import qwenpaw, os; print(os.path.dirname(os.path.dirname(qwenpaw.__file__)))" 2>/dev/null) || true
+        
+        if [ -z "$QwenPaw_PATH" ]; then
+            # 尝试从site-packages路径
+            QwenPaw_PATH=$(python3 -c "import site; print(site.getsitepackages()[0] + '/qwenpaw')" 2>/dev/null) || true
+        fi
+    fi
+    
     if [ -z "$QwenPaw_PATH" ]; then
         echo ""
         echo "❌ 错误: 无法找到QwenPaw根目录"
@@ -154,33 +165,43 @@ else
         echo "3. 设置环境变量:"
         echo "   export QWENPAW_ROOT=/path/to/QwenPaw"
         echo "   bash install.sh"
+        echo ""
+        echo "4. 如果是pip安装的QwenPaw，可以指定Python包路径:"
+        echo "   bash install.sh \$(python3 -c 'import qwenpaw, os; print(os.path.dirname(qwenpaw.__file__))')"
         exit 1
     fi
     echo "✓ 自动找到QwenPaw: $QwenPaw_PATH"
 fi
 
-# 验证找到的路径
-if [ ! -d "$QwenPaw_PATH/src/qwenpaw" ]; then
-    echo "错误: 指定的路径不是有效的QwenPaw根目录"
-    echo "未找到: $QwenPaw_PATH/src/qwenpaw"
+# 验证找到的路径（支持源码和pip两种安装方式）
+INSTALL_TYPE="source"
+if [ -d "$QwenPaw_PATH/src/qwenpaw" ]; then
+    # 源码安装方式
+    QWENPAW_PKG_PATH="$QwenPaw_PATH/src/qwenpaw"
+    INSTALL_TYPE="source"
+    echo ""
+    echo "✓ QwenPaw根目录: $QwenPaw_PATH"
+    echo "✓ 安装类型: 源码方式"
+elif [ -d "$QwenPaw_PATH" ] && [ -f "$QwenPaw_PATH/__init__.py" ]; then
+    # pip安装方式（QwenPaw_PATH就是Python包目录）
+    QWENPAW_PKG_PATH="$QwenPaw_PATH"
+    INSTALL_TYPE="pip"
+    echo ""
+    echo "✓ QwenPaw包目录: $QwenPaw_PATH"
+    echo "✓ 安装类型: pip方式"
+else
+    echo "错误: 指定的路径不是有效的QwenPaw目录"
+    echo "未找到: $QwenPaw_PATH/src/qwenpaw 或 $QwenPaw_PATH/__init__.py"
     exit 1
 fi
 
-if [ ! -f "$QwenPaw_PATH/pyproject.toml" ]; then
-    echo "错误: 指定的路径不是有效的QwenPaw根目录"
-    echo "未找到: $QwenPaw_PATH/pyproject.toml"
-    exit 1
-fi
-
-echo ""
-echo "✓ QwenPaw根目录: $QwenPaw_PATH"
 echo "✓ 脚本目录: $SCRIPT_DIR"
 
 # 1. 复制 HumanThinkingMemoryManager 到 tools 目录
 echo ""
 echo "1. 复制 HumanThinkingMemoryManager 到 tools 目录..."
 
-TOOLS_DIR="$QwenPaw_PATH/src/qwenpaw/agents/tools"
+TOOLS_DIR="$QWENPAW_PKG_PATH/agents/tools"
 TARGET_DIR="$TOOLS_DIR/HumanThinkingMemoryManager"
 
 if [ -d "$TARGET_DIR" ]; then
@@ -195,7 +216,7 @@ echo "   ✓ 成功复制到: $TARGET_DIR"
 echo ""
 echo "2. 更新 workspace.py 文件..."
 
-WORKSPACE_FILE="$QwenPaw_PATH/src/qwenpaw/app/workspace/workspace.py"
+WORKSPACE_FILE="$QWENPAW_PKG_PATH/app/workspace/workspace.py"
 
 if [ ! -f "$WORKSPACE_FILE" ]; then
     echo "错误: 未找到 $WORKSPACE_FILE"
@@ -252,7 +273,7 @@ fi
 echo ""
 echo "3. 更新 config.py 文件..."
 
-CONFIG_FILE="$QwenPaw_PATH/src/qwenpaw/config/config.py"
+CONFIG_FILE="$QWENPAW_PKG_PATH/config/config.py"
 
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "错误: 未找到 $CONFIG_FILE"
