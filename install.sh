@@ -54,8 +54,6 @@ fi
 find_qwenpaw_root() {
     local search_path="$1"
     
-    echo "   正在搜索 QwenPaw 根目录..."
-
     # 检查标准路径结构（QwenPaw源码目录）
     check_standard_layout() {
         local path="$1"
@@ -81,7 +79,6 @@ find_qwenpaw_root() {
 
     # 3. 尝试环境变量 QWENPAW_ROOT（优先级最高）
     if [ -n "$QWENPAW_ROOT" ]; then
-        echo "   检查环境变量 QWENPAW_ROOT: $QWENPAW_ROOT"
         if check_standard_layout "$QWENPAW_ROOT"; then
             echo "$QWENPAW_ROOT"
             return 0
@@ -90,7 +87,6 @@ find_qwenpaw_root() {
 
     # 4. 尝试环境变量 QWENPAW_WORKING_DIR
     if [ -n "$QWENPAW_WORKING_DIR" ]; then
-        echo "   检查环境变量 QWENPAW_WORKING_DIR: $QWENPAW_WORKING_DIR"
         if check_standard_layout "$QWENPAW_WORKING_DIR"; then
             echo "$QWENPAW_WORKING_DIR"
             return 0
@@ -132,7 +128,6 @@ find_qwenpaw_root() {
 
     # 6. 向上搜索（最多3层，避免卡住）
     if [ -n "$search_path" ] && [ -d "$search_path" ]; then
-        echo "   从 $search_path 向上搜索..."
         local current_path="$search_path"
         for i in {1..3}; do
             current_path="$(dirname "$current_path")"
