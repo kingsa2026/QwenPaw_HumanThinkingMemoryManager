@@ -150,7 +150,8 @@ if [ $# -gt 0 ]; then
     echo "使用命令行指定的路径: $QwenPaw_PATH"
 else
     echo "正在自动查找QwenPaw根目录..."
-    QwenPaw_PATH=$(find_qwenpaw_root "$(pwd)")
+    # Use || true to prevent set -e from exiting when function returns non-zero
+    QwenPaw_PATH=$(find_qwenpaw_root "$(pwd)") || true
     
     if [ -z "$QwenPaw_PATH" ]; then
         echo ""
