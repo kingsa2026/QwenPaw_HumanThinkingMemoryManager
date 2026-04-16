@@ -830,6 +830,88 @@ class HumanThinkingMemoryDB:
             }
         return {}
 
+    def get_cross_session_stats(self, agent_id: str = None) -> Dict[str, Any]:
+        """获取跨session记忆统计信息
+
+        统计该agent在不同session中的记忆分布情况，
+        帮助了解记忆的跨session共享情况。
+
+        Args:
+            agent_id: Agent ID（可选，默认当前agent）
+
+        Returns:
+            Dict[str, Any]: 跨session统计信息
+        """
+        search_agent = agent_id or self.agent_id
+
+        # 获取总session数
+        self.cursor.execute("""
+            SELECT COUNT(DISTINCT session_id) FROM qwenpaw_memory
+            WHERE agent_id = ? AND deleted_at IS NULL
+        """, (search_agent,))
+        total_sessions = self.cursor.fetchone()[0]
+
+        # 获取各session的记忆数量
+        self.cursor.execute("""
+            SELECT session_id, COUNT(*) as count
+            FROM qwenpaw_memory
+            WHERE agent_id = ? AND deleted_at IS NULL
+            GROUP BY session_id
+            ORDER BY count DESC
+        """, (search_agent,))
+        session_counts = self.cursor.fetchall()
+
+        # 获取共享记忆数（被多个session引用的记忆）
+        self.cursor.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT content, COUNT(DISTINCT session_id) as session_count
+                FROM qwenpaw_memory
+                WHERE agent_id = ? AND deleted_at IS NULL
+                GROUP BY content
+                HAVING session_count > 1
+            )
+        """, (search_agent,))
+        shared_memories = self.cursor.fetchone()[0]
+
+        # 获取跨session记忆数（出现在多个session中的记忆）
+        self.cursor.execute("""
+            SELECT COUNT(DISTINCT id) FROM (
+                SELECT id, COUNT(DISTINCT session_id) as session_count
+                FROM qwenpaw_memory
+                WHERE agent_id = ? AND deleted_at IS NULL
+                GROUP BY id
+                HAVING session_count > 1
+            )
+        """, (search_agent,))
+        cross_session_memories = self.cursor.fetchone()[0]
+
+        # 获取session详情
+        sessions = []
+        for row in session_counts[:10]:  # 最多显示10个session
+            sessions.append({
+                "session_id": row[0],
+                "memory_count": row[1]
+            })
+
+        # 获取活跃session（最近7天有活动的）
+        self.cursor.execute("""
+            SELECT COUNT(DISTINCT session_id) FROM qwenpaw_memory
+            WHERE agent_id = ?
+              AND deleted_at IS NULL
+              AND last_accessed_at >= datetime('now', '-7 days')
+        """, (search_agent,))
+        active_sessions = self.cursor.fetchone()[0]
+
+        return {
+            "total_sessions": total_sessions,
+            "active_sessions_7d": active_sessions,
+            "total_memories": sum(s[1] for s in session_counts),
+            "shared_memories": shared_memories,
+            "cross_session_memories": cross_session_memories,
+            "top_sessions": sessions,
+            "sharing_rate": round(cross_session_memories / sum(s[1] for s in session_counts) * 100, 2) if session_counts else 0
+        }
+
     def insert_memory(self, content: str, source_id: str, session_id: str, 
                      importance: int = 3, entity_name: Optional[str] = None, 
                      entity_type: Optional[str] = None, metadata: Optional[Dict] = None,

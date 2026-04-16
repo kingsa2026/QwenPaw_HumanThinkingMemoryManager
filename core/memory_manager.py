@@ -6,7 +6,7 @@ import sys
 import threading
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, List, Any
 
 # 模拟必要的类，避免依赖agentscope
 class TextBlock:
@@ -229,11 +229,11 @@ def _ensure_qwenpaw_path() -> None:
 _ensure_qwenpaw_path()
 
 # 动态导入子模块
-from .database import HumanThinkingMemoryDB
-from ..search.vector import VectorSearcher
-from ..hooks.memory_hooks import MemoryRetrievalHook, MemoryWriteHook, MemoryFreezerHook
-from ..utils.migrator import MemoryMigrator
-from ..utils.version import VersionManager
+from core.database import HumanThinkingMemoryDB
+from search.vector import VectorSearcher
+from hooks.memory_hooks import MemoryRetrievalHook, MemoryWriteHook, MemoryFreezerHook
+from utils.migrator import MemoryMigrator
+from utils.version import VersionManager
 
 logger = logging.getLogger(__name__)
 
@@ -562,6 +562,7 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         max_results: int = 5,
         min_score: float = 0.1,
         session_id: Optional[str] = None,
+        cross_session: bool = False,
     ) -> ToolResponse:
         """Search stored memories for relevant content (supports real-time cache search and session filtering).
 
@@ -570,6 +571,7 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
             max_results: Maximum number of results to return.
             min_score: Minimum relevance score.
             session_id: Optional session ID to filter results.
+            cross_session: If True, search across all sessions; if False, only search current session.
 
         Returns:
             ToolResponse: Response containing search results.
@@ -582,52 +584,82 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         try:
             # Update last activity time
             self.last_activity_time = datetime.now()
-            
+
             # Update session activity if session_id is provided
             if session_id:
                 self.session_manager.update_session(self.agent_id, session_id)
-            
+
             # 延迟初始化组件
             self._lazy_init_components()
-            
+
+            # 确定搜索策略
+            search_session_id = None if cross_session else session_id
+
             # 先从内存缓存中搜索
             cache_results = []
             with self.cache_lock:
                 if self._memory_cache:
                     for memory in self._memory_cache:
-                        # Filter by session if session_id is provided
-                        if session_id and memory.get('session_id') != session_id:
+                        # Filter by session if session_id is provided and not cross_session
+                        if not cross_session and session_id and memory.get('session_id') != session_id:
                             continue
                         if query.lower() in memory['content'].lower():
-                            memory['similarity'] = 0.9  # 缓存中的记忆相关性较高
-                            cache_results.append(memory)
-            
+                            memory_copy = memory.copy()
+                            memory_copy['similarity'] = 0.9  # 缓存中的记忆相关性较高
+                            memory_copy['source_type'] = 'cache'
+                            cache_results.append(memory_copy)
+
             # 从数据库中搜索
             db_results = await self.vector_searcher.search(
                 query=query,
                 max_results=max_results - len(cache_results),
                 agent_id=self.agent_id,
-                session_id=session_id,
+                session_id=search_session_id,
                 include_frozen=False
             )
 
+            # 标记数据库结果的来源类型
+            for mem in db_results:
+                mem['source_type'] = 'database'
+
             # 合并结果
             results = cache_results + db_results
-            
-            # 排序（按时间倒序）
-            results.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+
+            # 排序（按相关度、时间综合排序）
+            results.sort(key=lambda x: (x.get('similarity', 0), x.get('created_at', '')), reverse=True)
             results = results[:max_results]
 
-            # 格式化结果
+            # 格式化结果，标记session来源
             if not results:
                 return ToolResponse(
                     content=[TextBlock(type="text", text="No relevant memories found.")],
                 )
 
             result_text = "【相关记忆】\n\n"
+
+            # 统计各类型记忆数量
+            current_session_count = 0
+            history_session_count = 0
+
             for i, mem in enumerate(results, 1):
-                result_text += f"{i}. [{mem.get('created_at', 'N/A')}] {mem['content']}\n"
-                result_text += f"   重要性: {mem.get('importance', 3)} | 相关度: {mem.get('similarity', 'N/A')}\n\n"
+                mem_session_id = mem.get('session_id', 'unknown')
+                is_current_session = (mem_session_id == session_id) if session_id else False
+
+                if is_current_session:
+                    session_marker = "[当前session]"
+                    current_session_count += 1
+                else:
+                    session_marker = f"[历史session: {mem_session_id[:8] if mem_session_id else 'unknown'}...]"
+                    history_session_count += 1
+
+                result_text += f"{i}. {session_marker}\n"
+                result_text += f"   {mem.get('created_at', 'N/A')} | 重要性: {mem.get('importance', 3)} | 相关度: {round(mem.get('similarity', 0), 2)}\n"
+                result_text += f"   内容: {mem['content'][:100]}{'...' if len(mem['content']) > 100 else ''}\n\n"
+
+            # 添加统计信息
+            if cross_session:
+                result_text += "---\n"
+                result_text += f"统计: 当前session {current_session_count} 条 | 历史session {history_session_count} 条\n"
 
             # 更新访问时间
             for mem in results:
@@ -653,6 +685,87 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         """
         # 实现获取内存中记忆对象的逻辑
         return None
+
+    async def get_related_historical_memories(
+        self,
+        context: str,
+        current_session_id: str,
+        max_results: int = 5,
+    ) -> ToolResponse:
+        """获取与当前上下文相关的历史session记忆
+
+        当agent开始新session时，可以主动推送与当前上下文相关的历史记忆，
+        帮助agent保持跨session的上下文连续性。
+
+        Args:
+            context: 当前上下文/话题
+            current_session_id: 当前session ID
+            max_results: 最大结果数
+
+        Returns:
+            ToolResponse: 包含相关历史记忆的响应
+        """
+        if not self._started:
+            return ToolResponse(
+                content=[TextBlock(type="text", text="Memory Manager not started")],
+            )
+
+        try:
+            # 更新session活动
+            self.last_activity_time = datetime.now()
+            self.session_manager.update_session(self.agent_id, current_session_id)
+
+            # 延迟初始化组件
+            self._lazy_init_components()
+
+            # 跨session搜索相关历史记忆
+            historical_results = await self.vector_searcher.search(
+                query=context,
+                max_results=max_results,
+                agent_id=self.agent_id,
+                session_id=None,  # 跨所有session搜索
+                include_frozen=False
+            )
+
+            # 过滤掉当前session的记忆
+            filtered_results = [
+                mem for mem in historical_results
+                if mem.get('session_id') != current_session_id
+            ]
+
+            if not filtered_results:
+                return ToolResponse(
+                    content=[TextBlock(type="text", text="No related historical memories found.")],
+                )
+
+            # 格式化结果
+            result_text = "【相关历史记忆推送】\n"
+            result_text += "以下是与当前上下文相关的历史session记忆：\n\n"
+
+            # 按session分组
+            session_memories: Dict[str, List[Dict]] = {}
+            for mem in filtered_results:
+                sess_id = mem.get('session_id', 'unknown')
+                if sess_id not in session_memories:
+                    session_memories[sess_id] = []
+                session_memories[sess_id].append(mem)
+
+            # 显示各session的相关记忆
+            for i, (sess_id, memories) in enumerate(session_memories.items(), 1):
+                result_text += f"\n📚 历史session {sess_id[:8]}... ({len(memories)}条相关记忆)\n"
+                for j, mem in enumerate(memories[:3], 1):  # 每个session最多显示3条
+                    result_text += f"   {i}.{j} [{mem.get('created_at', 'N/A')}] {mem['content'][:80]}...\n"
+                    result_text += f"      重要性: {mem.get('importance', 3)} | 相关度: {round(mem.get('similarity', 0), 2)}\n"
+
+            result_text += "\n---\n提示: 这些是来自历史session的相关记忆，可以帮助保持上下文连续性"
+
+            return ToolResponse(content=[TextBlock(type="text", text=result_text)])
+
+        except Exception as e:
+            logger.error(f"Failed to get related historical memories: {e}")
+            return ToolResponse(
+                content=[TextBlock(type="text", text=f"Failed to get related memories: {e}")],
+            )
 
     async def store_memory(self, content: str, source_id: str = "system",
                          session_id: Optional[str] = None, importance: int = 3,
@@ -772,7 +885,33 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         if not self._started:
             return {"error": "Memory Manager not started"}
 
-        return self.db.get_stats()
+        # 获取基础统计信息
+        stats = self.db.get_stats()
+
+        # 获取跨session统计信息
+        try:
+            cross_session_stats = self.db.get_cross_session_stats()
+            stats["cross_session"] = cross_session_stats
+        except Exception as e:
+            logger.warning(f"Failed to get cross-session stats: {e}")
+
+        # 获取session管理器的session信息
+        try:
+            sessions_info = []
+            with self.session_manager.lock:
+                for key, session in self.session_manager.sessions.items():
+                    if session["agent_id"] == self.agent_id:
+                        sessions_info.append({
+                            "session_id": session["session_id"],
+                            "created_at": session["created_at"].isoformat() if hasattr(session["created_at"], "isoformat") else str(session["created_at"]),
+                            "last_activity": session["last_activity"].isoformat() if hasattr(session["last_activity"], "isoformat") else str(session["last_activity"]),
+                            "memory_count": len(session.get("memories", []))
+                        })
+            stats["active_sessions"] = sessions_info
+        except Exception as e:
+            logger.warning(f"Failed to get session info: {e}")
+
+        return stats
 
     async def freeze_memories(self) -> int:
         """Execute freeze scan, mark low-frequency access memories.
@@ -810,6 +949,154 @@ class HumanThinkingMemoryManager(BaseMemoryManager):
         self._lazy_init_components()
         
         return self.freezer_hook.defrost_related_memories(query)
+
+    async def categorize_memory(self, memory_id: int, category_name: str, confidence: float = 0.5) -> bool:
+        """为记忆添加分类
+
+        Args:
+            memory_id: 记忆ID
+            category_name: 分类名称
+            confidence: 分类置信度
+
+        Returns:
+            bool: 是否成功
+        """
+        if not self._started:
+            raise RuntimeError("Memory Manager not started")
+
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
+        return self.db.categorize_memory(memory_id, category_name, confidence)
+
+    async def get_memory_categories(self, memory_id: int) -> list:
+        """获取记忆的分类
+
+        Args:
+            memory_id: 记忆ID
+
+        Returns:
+            list: 分类列表
+        """
+        if not self._started:
+            raise RuntimeError("Memory Manager not started")
+
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
+        return self.db.get_memory_categories(memory_id)
+
+    async def search_by_category(self, category_name: str, max_results: int = 10) -> list:
+        """按分类搜索记忆
+
+        Args:
+            category_name: 分类名称
+            max_results: 最大结果数
+
+        Returns:
+            list: 记忆列表
+        """
+        if not self._started:
+            raise RuntimeError("Memory Manager not started")
+
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
+        return self.db.search_by_category(category_name, max_results)
+
+    async def create_memory_relation(self, memory_id1: int, memory_id2: int, 
+                                  relation_type: str = "related", similarity_score: float = 0.0) -> bool:
+        """创建记忆之间的关联
+
+        Args:
+            memory_id1: 第一个记忆ID
+            memory_id2: 第二个记忆ID
+            relation_type: 关联类型
+            similarity_score: 相似度分数
+
+        Returns:
+            bool: 是否成功
+        """
+        if not self._started:
+            raise RuntimeError("Memory Manager not started")
+
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
+        return self.db.create_memory_relation(memory_id1, memory_id2, relation_type, similarity_score)
+
+    async def get_related_memories(self, memory_id: int, max_results: int = 5) -> list:
+        """获取与指定记忆相关的记忆
+
+        Args:
+            memory_id: 记忆ID
+            max_results: 最大结果数
+
+        Returns:
+            list: 相关记忆列表
+        """
+        if not self._started:
+            raise RuntimeError("Memory Manager not started")
+
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
+        return self.db.get_related_memories(memory_id, max_results)
+
+    async def update_memory_summary(self, memory_id: int, summary: str) -> bool:
+        """更新记忆摘要
+
+        Args:
+            memory_id: 记忆ID
+            summary: 记忆摘要
+
+        Returns:
+            bool: 是否成功
+        """
+        if not self._started:
+            raise RuntimeError("Memory Manager not started")
+
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
+        return self.db.update_memory_summary(memory_id, summary)
+
+    async def update_memory_priority(self, memory_id: int, importance: int = None, 
+                                  importance_score: float = None) -> bool:
+        """更新记忆优先级
+
+        Args:
+            memory_id: 记忆ID
+            importance: 重要性等级 (1-5)
+            importance_score: 重要性分数
+
+        Returns:
+            bool: 是否成功
+        """
+        if not self._started:
+            raise RuntimeError("Memory Manager not started")
+
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
+        return self.db.update_memory_priority(memory_id, importance, importance_score)
+
+    async def auto_adjust_priority(self, days: int = 7) -> int:
+        """自动调整记忆优先级
+
+        Args:
+            days: 统计天数
+
+        Returns:
+            int: 调整的记忆数量
+        """
+        if not self._started:
+            raise RuntimeError("Memory Manager not started")
+
+        # Update last activity time
+        self.last_activity_time = datetime.now()
+        
+        return self.db.auto_adjust_priority(days)
 
     def __repr__(self) -> str:
         return f"HumanThinkingMemoryManager(agent_id={self.agent_id}, started={self._started})"
