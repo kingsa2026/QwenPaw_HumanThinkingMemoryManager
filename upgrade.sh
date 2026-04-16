@@ -1,100 +1,141 @@
 #!/bin/bash
-# 一键升级脚本 - 从旧版本升级到 1.0.2-beta0.1
+# Human Thinking Memory Manager 一键升级脚本
+# 支持从任意旧版本升级到最新版本
 
 set -e
 
 echo "=================================="
 echo "Human Thinking Memory Manager 升级脚本"
-echo "目标版本: 1.0.2-beta0.1"
+echo "目标版本: 1.0.2-beta0.3"
 echo "=================================="
 
 # 检测当前目录
-if [ ! -d "core" ] && [ ! -d "HumanThinkingMemoryManager" ]; then
-    echo "错误: 请在 QwenPaw_HumanThinkingMemoryManager 目录中运行此脚本"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 查找Python
+PYTHON_CMD=""
+if command -v python3 &> /dev/null; then
+    PYTHON_CMD="python3"
+elif command -v python &> /dev/null; then
+    PYTHON_CMD="python"
+else
+    echo "错误: 未找到Python解释器"
     exit 1
 fi
 
 # 检测QwenPaw路径
 QWENPAW_PATH=""
-if [ -d "../../../src/qwenpaw" ]; then
-    QWENPAW_PATH="../../../"
-elif [ -d "../../src/qwenpaw" ]; then
-    QWENPAW_PATH="../../"
-elif [ -d "../src/qwenpaw" ]; then
-    QWENPAW_PATH="../"
-else
-    echo "警告: 未找到 QwenPaw 安装目录"
-    echo "请确保此脚本在 QwenPaw/tools/HumanThinkingMemoryManager 目录中运行"
+if [ -d "$SCRIPT_DIR/../../../src/qwenpaw" ]; then
+    QWENPAW_PATH="$SCRIPT_DIR/../../../"
+elif [ -d "$SCRIPT_DIR/../../src/qwenpaw" ]; then
+    QWENPAW_PATH="$SCRIPT_DIR/../../"
+elif [ -d "$SCRIPT_DIR/../src/qwenpaw" ]; then
+    QWENPAW_PATH="$SCRIPT_DIR/../"
 fi
 
-# 备份旧版本
-echo "\n1. 备份旧版本..."
-BACKUP_DIR="./backups"
-mkdir -p "$BACKUP_DIR"
-BACKUP_FILE="$BACKUP_DIR/backup_$(date +%Y%m%d_%H%M%S).tar.gz"
 
-if [ -d "HumanThinkingMemoryManager" ]; then
+# 查找数据库文件
+DB_PATH=""
+if [ -n "$QWENPAW_PATH" ]; then
+    # 在QwenPaw工作目录中查找
+    for db in "$QWENPAW_PATH"/*/memory/human_thinking_memory_*.db; do
+        if [ -f "$db" ]; then
+            DB_PATH="$db"
+            break
+        fi
+    done
+fi
+
+# 交互式输入数据库路径
+if [ -z "$DB_PATH" ]; then
+    echo ""
+    echo "未找到数据库文件"
+    echo "请输入数据库文件路径（按回车跳过，将只执行代码升级）:"
+    read -r DB_PATH_INPUT
+    DB_PATH="$DB_PATH_INPUT"
+fi
+
+# 创建备份目录
+BACKUP_DIR="$SCRIPT_DIR/backups"
+mkdir -p "$BACKUP_DIR"
+
+# 备份旧版本（如果存在）
+if [ -d "$SCRIPT_DIR/HumanThinkingMemoryManager" ]; then
+    echo ""
+    echo "1. 备份旧版本..."
+    BACKUP_FILE="$BACKUP_DIR/backup_$(date +%Y%m%d_%H%M%S).tar.gz"
     tar -czf "$BACKUP_FILE" HumanThinkingMemoryManager
     echo "已备份旧版本到: $BACKUP_FILE"
-else
-    echo "未找到旧版本目录，跳过备份"
 fi
 
-# 清理旧文件
-echo "\n2. 清理旧文件..."
-if [ -d "HumanThinkingMemoryManager" ]; then
-    rm -rf HumanThinkingMemoryManager
-    echo "已删除旧版本目录"
-fi
-
-# 下载新版本
-echo "\n3. 下载新版本..."
-GITHUB_REPO="kingsa2026/QwenPaw_HumanThinkingMemoryManager"
-RELEASE_TAG="v1.0.2-beta0.1"
-
-# 下载最新版本的代码
+# 更新代码
+echo ""
+echo "2. 更新代码..."
 if command -v git &> /dev/null; then
-    echo "使用 git 克隆最新版本..."
-    git pull origin main
+    cd "$SCRIPT_DIR"
+    if git pull origin main &> /dev/null; then
+        echo "已从GitHub拉取最新代码"
+    else
+        echo "Git拉取失败，请手动更新代码"
+    fi
 else
-    echo "未安装 git，跳过代码更新"
+    echo "未安装git，请手动更新代码"
+fi
+
+# 升级数据库
+if [ -n "$DB_PATH" ] && [ -f "$DB_PATH" ]; then
+    echo ""
+    echo "3. 升级数据库..."
+    echo "数据库文件: $DB_PATH"
+    echo "备份目录: $BACKUP_DIR"
+
+    # 使用Python脚本升级数据库
+    if [ -f "$SCRIPT_DIR/upgrade.py" ]; then
+        $PYTHON_CMD "$SCRIPT_DIR/upgrade.py" --db-path "$DB_PATH" --backup-dir "$BACKUP_DIR"
+    else
+        echo "警告: 升级脚本不存在，跳过数据库升级"
+    fi
+else
+    echo ""
+    echo "3. 跳过数据库升级（未指定数据库文件）"
 fi
 
 # 安装到 QwenPaw
-echo "\n4. 安装到 QwenPaw..."
+echo ""
+echo "4. 安装到 QwenPaw..."
 if [ -n "$QWENPAW_PATH" ]; then
-    # 复制文件到 QwenPaw 的 tools 目录
     TOOLS_DIR="$QWENPAW_PATH/src/qwenpaw/agents/tools"
     mkdir -p "$TOOLS_DIR"
-    
+
     # 复制核心文件
-    cp -r core "$TOOLS_DIR/"
-    cp -r search "$TOOLS_DIR/"
-    cp -r hooks "$TOOLS_DIR/"
-    cp -r utils "$TOOLS_DIR/"
-    cp -r config "$TOOLS_DIR/"
-    cp install.sh "$TOOLS_DIR/"
-    cp uninstall.sh "$TOOLS_DIR/"
-    
-    echo "已安装到 QwenPaw tools 目录"
+    cp -r "$SCRIPT_DIR/core" "$TOOLS_DIR/"
+    cp -r "$SCRIPT_DIR/search" "$TOOLS_DIR/"
+    cp -r "$SCRIPT_DIR/hooks" "$TOOLS_DIR/"
+    cp -r "$SCRIPT_DIR/utils" "$TOOLS_DIR/"
+    cp -r "$SCRIPT_DIR/config" "$TOOLS_DIR/"
+
+    # 复制脚本文件
+    cp "$SCRIPT_DIR/install.sh" "$TOOLS_DIR/"
+    cp "$SCRIPT_DIR/uninstall.sh" "$TOOLS_DIR/"
+    cp "$SCRIPT_DIR/upgrade.sh" "$TOOLS_DIR/"
+    cp "$SCRIPT_DIR/upgrade.py" "$TOOLS_DIR/"
+
+    echo "已安装到 QwenPaw tools 目录: $TOOLS_DIR"
 else
     echo "未找到 QwenPaw 目录，跳过安装"
 fi
 
-# 运行数据库升级
-echo "\n5. 运行数据库升级..."
-if [ -f "core/database.py" ]; then
-    echo "数据库结构已更新，下次启动时会自动升级"
-else
-    echo "未找到数据库文件，跳过升级"
-fi
-
-echo "\n=================================="
+echo ""
+echo "=================================="
 echo "升级完成！"
-echo "目标版本: 1.0.2-beta0.1"
-echo "\n新功能："
-echo "- 智能记忆管理：记忆分类、记忆关联、记忆摘要、记忆优先级"
-echo "- 数据库结构优化"
-echo "- 版本管理改进"
-echo "\n请重启 QwenPaw 以应用更改"
+echo "目标版本: 1.0.2-beta0.3"
+echo ""
+echo "新功能："
+echo "- 记忆温度概念：综合考虑访问频率、重要性、时间衰减"
+echo "- 固定记忆机制：保护重要记忆不被自动降级"
+echo "- 热数据/冷数据分层存储优化"
+echo "- HNSW-like向量搜索算法"
+echo "- 增量索引更新"
+echo ""
+echo "请重启 QwenPaw 以应用更改"
 echo "=================================="

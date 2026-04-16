@@ -165,7 +165,24 @@ bash src/qwenpaw/agents/tools/HumanThinkingMemoryManager/install.sh
 
 ### 从旧版本升级
 
-如果您正在使用旧版本的HumanThinkingMemoryManager，可以使用以下脚本一键升级到最新版本：
+如果您正在使用旧版本的HumanThinkingMemoryManager，可以使用以下脚本一键升级到最新版本。
+
+#### 统一升级脚本（推荐）
+
+新版本的升级脚本（`upgrade.sh`/`upgrade.py`）支持从**任意旧版本**自动升级到最新版本，包括：
+- v1.0.0
+- v1.0.1
+- v1.0.2
+- v1.0.2-beta0.1
+- v1.0.2-beta0.2
+- v1.0.2-beta0.3
+
+升级脚本会自动：
+1. 检测当前数据库版本
+2. 备份数据库
+3. 执行必要的数据库迁移
+4. 更新代码
+5. 安装到QwenPaw
 
 #### Linux/Mac系统
 ```bash
@@ -179,12 +196,12 @@ cd C:\path\to\QwenPaw\src\qwenpaw\agents\tools\HumanThinkingMemoryManager
 upgrade.bat
 ```
 
-升级脚本会自动：
-1. 备份旧版本
-2. 清理旧文件
-3. 下载最新版本
-4. 安装到QwenPaw
-5. 运行数据库升级
+#### 单独升级数据库
+
+如果只需要升级数据库（不更新代码），可以使用Python脚本：
+```bash
+python upgrade.py --db-path /path/to/database.db --backup-dir ./backups
+```
 
 ## 配置选项
 
