@@ -220,7 +220,40 @@ if [ -d "$TARGET_DIR" ]; then
     rm -rf "$TARGET_DIR"
 fi
 
-cp -r "$SCRIPT_DIR" "$TARGET_DIR"
+# 在管道模式下，SCRIPT_DIR是下载的完整仓库，但我们只需要core目录和其他必要文件
+if [ $PIPE_MODE -eq 1 ]; then
+    # 创建临时目录，只复制必要的目录和文件
+    TEMP_INSTALL_DIR=$(mktemp -d -t htmmtmp.XXXXXX)
+    
+    # 复制核心目录
+    cp -r "$SCRIPT_DIR/core" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    cp -r "$SCRIPT_DIR/config" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    cp -r "$SCRIPT_DIR/hooks" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    cp -r "$SCRIPT_DIR/search" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    cp -r "$SCRIPT_DIR/utils" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    
+    # 复制必要文件
+    cp "$SCRIPT_DIR/__init__.py" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/__version__.py" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    
+    # 复制安装脚本自身
+    cp "$SCRIPT_DIR/install.sh" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/uninstall.sh" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/upgrade.sh" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    
+    # 复制README等文档
+    cp "$SCRIPT_DIR/README.md" "$TEMP_INSTALL_DIR/" 2>/dev/null || true
+    
+    # 移动临时目录内容到目标位置
+    mv "$TEMP_INSTALL_DIR" "$TARGET_DIR"
+    
+    # 清理临时目录（如果还存在）
+    rm -rf "$TEMP_INSTALL_DIR" 2>/dev/null || true
+else
+    # 非管道模式，直接复制整个目录
+    cp -r "$SCRIPT_DIR" "$TARGET_DIR"
+fi
+
 echo "   ✓ 成功复制到: $TARGET_DIR"
 
 # 2. 更新 workspace.py 文件，添加 HumanThinkingMemoryManager 支持
