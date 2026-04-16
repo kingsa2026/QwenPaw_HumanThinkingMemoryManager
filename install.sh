@@ -152,7 +152,7 @@ fi
 cp -r "$SCRIPT_DIR" "$TARGET_DIR"
 echo "   ✓ 成功复制到: $TARGET_DIR"
 
-# 2. 更新 workspace.py 文件
+# 2. 更新 workspace.py 文件，添加 HumanThinkingMemoryManager 支持
 echo ""
 echo "2. 更新 workspace.py 文件..."
 
@@ -177,17 +177,19 @@ workspace_file = sys.argv[1]
 with open(workspace_file, 'r', encoding='utf-8') as f:
     content = f.read()
 
-# 新的函数定义
+# 新的函数定义 - 添加human_thinking选项
 new_function = '''def _resolve_memory_class(backend: str) -> type:
     """Return the memory manager class for the given backend name."""
     from ...agents.memory import ReMeLightMemoryManager
     try:
         from ...agents.tools.HumanThinkingMemoryManager.core.memory_manager import HumanThinkingMemoryManager
-        return HumanThinkingMemoryManager
     except ImportError:
-        pass
+        HumanThinkingMemoryManager = None
+
     if backend == "remelight":
         return ReMeLightMemoryManager
+    elif backend == "human_thinking" and HumanThinkingMemoryManager is not None:
+        return HumanThinkingMemoryManager
     raise ConfigurationException(
         message=f"Unsupported memory manager backend: '{backend}'",
     )'''
@@ -207,6 +209,51 @@ PYTHON_SCRIPT
     python3 - "$WORKSPACE_FILE"
 fi
 
+# 3. 更新 config.py 文件，添加 human_thinking 选项
+echo ""
+echo "3. 更新 config.py 文件..."
+
+CONFIG_FILE="$QwenPaw_PATH/src/qwenpaw/config/config.py"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "错误: 未找到 $CONFIG_FILE"
+    exit 1
+fi
+
+if grep -q "human_thinking" "$CONFIG_FILE" 2>/dev/null; then
+    echo "   ✓ human_thinking 选项已经存在"
+else
+    cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
+    
+    python3 << 'PYTHON_SCRIPT'
+import sys
+import re
+
+config_file = sys.argv[1]
+
+with open(config_file, 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 查找并替换 memory_manager_backend 的 Literal 类型
+old_pattern = r'memory_manager_backend: Literal\["remelight"\]'
+new_pattern = 'memory_manager_backend: Literal["remelight", "human_thinking"]'
+
+if re.search(old_pattern, content):
+    content = re.sub(old_pattern, new_pattern, content)
+    # 同时更新描述
+    content = content.replace(
+        'Currently only \'remelight\' is supported.',
+        'Memory manager backend type. Options: "remelight" (default), "human_thinking".'
+    )
+    with open(config_file, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print("   ✓ 成功更新 config.py，添加 human_thinking 选项")
+else:
+    print("   ⚠ 未找到 memory_manager_backend 配置")
+PYTHON_SCRIPT
+    python3 - "$CONFIG_FILE"
+fi
+
 echo ""
 echo "=========================================="
 echo "✓ 安装完成！"
@@ -215,7 +262,13 @@ echo ""
 echo "Human Thinking Memory Manager 已成功集成到 QwenPaw 中"
 echo ""
 echo "使用方法："
-echo "1. 重启 QwenPaw 服务以应用更改"
-echo "2. 系统将自动使用 HumanThinkingMemoryManager"
+echo "1. 在 config.json 或 workspace/agent.json 中设置："
+echo "   \"memory_manager_backend\": \"human_thinking\""
+echo ""
+echo "2. 重启 QwenPaw 服务以应用更改"
+echo ""
+echo "注意："
+echo "- 默认为 \"remelight\"，如需使用 HumanThinkingMemoryManager，请手动修改配置"
+echo "- 如果导入失败，会自动回退到默认的 ReMeLightMemoryManager"
 echo ""
 echo "=========================================="

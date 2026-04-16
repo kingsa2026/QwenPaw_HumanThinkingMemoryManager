@@ -7,10 +7,36 @@
 ✅ **已适配 QwenPaw 最新版本 v1.1.2b2**
 
 本模块已完整适配 QwenPaw v1.1.2b2 版本，包括：
-- 兼容 `memory_manager_backend: Literal["remelight"]` 配置
-- 无需修改 config.py，自动替换 workspace.py 中的记忆管理器
+- 扩展 `memory_manager_backend: Literal["remelight", "human_thinking"]` 配置
+- 用户可在 config.json 或 workspace/agent.json 中自行选择使用哪个记忆管理器
 - 完整实现 BaseMemoryManager 抽象接口
 - 支持向后兼容旧版本 QwenPaw（v1.1.2b1 及更早版本）
+
+### 如何选择使用 HumanThinkingMemoryManager
+
+安装完成后，在以下配置文件中设置即可：
+
+**方式一：在根配置 config.json 中设置（全局生效）**
+```json
+{
+  "agents": {
+    "running": {
+      "memory_manager_backend": "human_thinking"
+    }
+  }
+}
+```
+
+**方式二：在 workspace/agent.json 中设置（仅对特定 agent 生效）**
+```json
+{
+  "running": {
+    "memory_manager_backend": "human_thinking"
+  }
+}
+```
+
+默认值为 `"remelight"`，使用 QwenPaw 自带的记忆管理器。
 
 ## 快速开始
 

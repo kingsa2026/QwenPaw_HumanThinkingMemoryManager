@@ -126,7 +126,6 @@ if [ -f "$WORKSPACE_FILE" ]; then
     if grep -q "HumanThinkingMemoryManager" "$WORKSPACE_FILE" 2>/dev/null; then
         cp "$WORKSPACE_FILE" "${WORKSPACE_FILE}.bak"
 
-        # 使用Python脚本来修改文件
         python3 << 'PYTHON_SCRIPT'
 import sys
 import re
@@ -166,9 +165,53 @@ else
     echo "   警告: workspace.py 文件不存在"
 fi
 
-# 2. 删除 HumanThinkingMemoryManager 目录
+# 2. 从 config.py 中移除 human_thinking 选项
 echo ""
-echo "2. 删除 HumanThinkingMemoryManager 目录..."
+echo "2. 从 config.py 中移除 human_thinking 选项..."
+
+CONFIG_FILE="$QwenPaw_PATH/src/qwenpaw/config/config.py"
+
+if [ -f "$CONFIG_FILE" ]; then
+    if grep -q "human_thinking" "$CONFIG_FILE" 2>/dev/null; then
+        cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
+
+        python3 << 'PYTHON_SCRIPT'
+import sys
+import re
+
+config_file = sys.argv[1]
+
+with open(config_file, 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 恢复原始的 Literal 类型
+old_pattern = r'memory_manager_backend: Literal\["remelight", "human_thinking"\]'
+new_pattern = 'memory_manager_backend: Literal["remelight"]'
+
+if re.search(old_pattern, content):
+    content = re.sub(old_pattern, new_pattern, content)
+    # 恢复原始描述
+    content = content.replace(
+        'Memory manager backend type. Options: "remelight" (default), "human_thinking".',
+        'Currently only \'remelight\' is supported.'
+    )
+    with open(config_file, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print("   ✓ 成功从 config.py 中移除 human_thinking 选项")
+else:
+    print("   ⚠ 未找到 human_thinking 配置")
+PYTHON_SCRIPT
+        python3 - "$CONFIG_FILE"
+    else
+        echo "   ✓ human_thinking 选项已经不存在"
+    fi
+else
+    echo "   警告: config.py 文件不存在"
+fi
+
+# 3. 删除 HumanThinkingMemoryManager 目录
+echo ""
+echo "3. 删除 HumanThinkingMemoryManager 目录..."
 
 TARGET_DIR="$QwenPaw_PATH/src/qwenpaw/agents/tools/HumanThinkingMemoryManager"
 
