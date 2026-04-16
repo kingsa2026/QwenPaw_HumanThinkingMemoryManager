@@ -6,7 +6,7 @@ set -e
 
 echo "=================================="
 echo "Human Thinking Memory Manager 升级脚本"
-echo "目标版本: 1.0.2-beta0.3"
+echo "目标版本: 1.0.3-beta0.1"
 echo "=================================="
 
 # 获取脚本目录
@@ -223,14 +223,13 @@ fi
 echo ""
 echo "=================================="
 echo "升级完成！"
-echo "目标版本: 1.0.2-beta0.3"
+echo "目标版本: 1.0.3-beta0.1"
 echo ""
 echo "新功能："
-echo "- 记忆温度概念：综合考虑访问频率、重要性、时间衰减"
-echo "- 固定记忆机制：保护重要记忆不被自动降级"
-echo "- 热数据/冷数据分层存储优化"
-echo "- HNSW-like向量搜索算法"
-echo "- 增量索引更新"
+echo "- 完整适配 QwenPaw v1.1.2b2 版本"
+echo "- 支持 memory_manager_backend: Literal['remelight'] 配置"
+echo "- 简化安装流程，无需修改 config.py"
+echo "- 优雅降级机制，导入失败自动回退到默认记忆管理器"
 echo ""
 echo "请重启 QwenPaw 以应用更改"
 echo "=================================="

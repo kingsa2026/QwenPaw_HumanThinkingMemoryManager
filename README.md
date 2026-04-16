@@ -2,6 +2,16 @@
 
 > QwenPaw 超级神经记忆系统 - 跨Session碎片化记忆整合 + 神经元感知向量记忆检索架构
 
+## 版本兼容性
+
+✅ **已适配 QwenPaw 最新版本 v1.1.2b2**
+
+本模块已完整适配 QwenPaw v1.1.2b2 版本，包括：
+- 兼容 `memory_manager_backend: Literal["remelight"]` 配置
+- 无需修改 config.py，自动替换 workspace.py 中的记忆管理器
+- 完整实现 BaseMemoryManager 抽象接口
+- 支持向后兼容旧版本 QwenPaw（v1.1.2b1 及更早版本）
+
 ## 快速开始
 
 ### 一键安装（最简单）
@@ -320,17 +330,27 @@ related = await manager.get_related_memories(memory_id)
 
 ## 快速验证
 
+快速验证功能：
+
 ```bash
-# 快速验证功能
 python quick_verify.py
+```
 
-# 运行完整测试
+运行完整测试：
+
+```bash
 python test_human_thinking_memory_manager.py
+```
 
-# 会话管理测试
+会话管理测试：
+
+```bash
 python test_session_management.py
+```
 
-# 智能记忆测试
+智能记忆测试：
+
+```bash
 python test_intelligent_memory.py
 ```
 

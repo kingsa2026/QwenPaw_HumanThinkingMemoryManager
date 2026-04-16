@@ -44,7 +44,6 @@ find_qwenpaw_root() {
 
     # 尝试环境变量
     if [ -n "$QWENPAW_WORKING_DIR" ] && [ -d "$QWENPAW_WORKING_DIR" ]; then
-        # QWENPAW_WORKING_DIR是工作目录，需要向上查找源码
         local src_path="$QWENPAW_WORKING_DIR"
         for i in {1..3}; do
             if check_standard_layout "$src_path"; then
@@ -62,12 +61,11 @@ find_qwenpaw_root() {
     fi
 
     # 尝试常见位置（按优先级排序）
-    # QwenPaw的WORKING_DIR默认是 ~/.qwenpaw，但源码通常在其他位置
     local common_paths=(
-        "$HOME/.qwenpaw"           # QwenPaw默认工作目录（可能包含源码）
-        "$HOME/.copaw"             # 旧版本QwenPaw工作目录
-        "$HOME/QwenPaw"            # 用户目录下的大写版本
-        "$HOME/qwenpaw"            # 用户目录下的小写版本
+        "$HOME/.qwenpaw"
+        "$HOME/.copaw"
+        "$HOME/QwenPaw"
+        "$HOME/qwenpaw"
         "$HOME/projects/qwenpaw"
         "/opt/QwenPaw"
         "/opt/qwenpaw"
@@ -89,21 +87,15 @@ find_qwenpaw_root() {
 
 # 确定QwenPaw路径
 if [ $# -gt 0 ]; then
-    # 命令行参数提供路径
     QwenPaw_PATH="$1"
     echo "使用命令行指定的路径: $QwenPaw_PATH"
 else
-    # 自动查找
     echo "正在自动查找QwenPaw根目录..."
-
-    # 首先检查当前目录
     if [ -d "./src/qwenpaw" ] && [ -f "./pyproject.toml" ]; then
         QwenPaw_PATH="$(pwd)"
         echo "在当前目录找到QwenPaw: $QwenPaw_PATH"
     else
-        # 在脚本目录向上搜索
         QwenPaw_PATH=$(find_qwenpaw_root "$SCRIPT_DIR")
-
         if [ -z "$QwenPaw_PATH" ]; then
             echo "错误: 无法找到QwenPaw根目录"
             echo ""
@@ -124,7 +116,6 @@ else
             echo "   bash install.sh"
             exit 1
         fi
-
         echo "自动找到QwenPaw: $QwenPaw_PATH"
     fi
 fi
@@ -146,39 +137,22 @@ echo ""
 echo "✓ QwenPaw根目录: $QwenPaw_PATH"
 echo "✓ 脚本目录: $SCRIPT_DIR"
 
-# 1. 更新 tools/__init__.py 文件
+# 1. 复制 HumanThinkingMemoryManager 到 tools 目录
 echo ""
-echo "1. 更新 tools/__init__.py 文件..."
+echo "1. 复制 HumanThinkingMemoryManager 到 tools 目录..."
 
-INIT_FILE="$QwenPaw_PATH/src/qwenpaw/agents/tools/__init__.py"
+TOOLS_DIR="$QwenPaw_PATH/src/qwenpaw/agents/tools"
+TARGET_DIR="$TOOLS_DIR/HumanThinkingMemoryManager"
 
-# 检查文件是否存在
-if [ ! -f "$INIT_FILE" ]; then
-    echo "错误: 未找到 $INIT_FILE"
-    exit 1
+if [ -d "$TARGET_DIR" ]; then
+    echo "   目标目录已存在，正在删除..."
+    rm -rf "$TARGET_DIR"
 fi
 
-# 检查是否已经导入 HumanThinkingTool
-if grep -q "HumanThinkingTool" "$INIT_FILE" 2>/dev/null; then
-    echo "   ✓ HumanThinkingTool 已经在 __init__.py 中导入"
-else
-    # 备份原文件
-    cp "$INIT_FILE" "${INIT_FILE}.bak"
+cp -r "$SCRIPT_DIR" "$TARGET_DIR"
+echo "   ✓ 成功复制到: $TARGET_DIR"
 
-    # 添加导入语句
-    sed -i '1i from .HumanThinkingMemoryManager import HumanThinkingTool, get_tool' "$INIT_FILE"
-
-    # 更新 __all__ 列表
-    if grep -q "__all__ = " "$INIT_FILE" 2>/dev/null; then
-        sed -i '/__all__ = / s/\[/\[\\n    "HumanThinkingTool",\\n    "get_tool",/' "$INIT_FILE"
-    else
-        echo "__all__ = [\"HumanThinkingTool\", \"get_tool\"]" >> "$INIT_FILE"
-    fi
-
-    echo "   ✓ 成功更新 tools/__init__.py 文件"
-fi
-
-# 2. 更新 workspace.py 文件，添加 HumanThinkingMemoryManager 支持
+# 2. 更新 workspace.py 文件
 echo ""
 echo "2. 更新 workspace.py 文件..."
 
@@ -189,34 +163,19 @@ if [ ! -f "$WORKSPACE_FILE" ]; then
     exit 1
 fi
 
-# 检查是否已经添加 HumanThinkingMemoryManager 支持
 if grep -q "HumanThinkingMemoryManager" "$WORKSPACE_FILE" 2>/dev/null; then
     echo "   ✓ HumanThinkingMemoryManager 支持已经存在"
 else
-    # 备份原文件
     cp "$WORKSPACE_FILE" "${WORKSPACE_FILE}.bak"
-
-    # 检查 _resolve_memory_class 函数是否存在
-    if grep -q "_resolve_memory_class" "$WORKSPACE_FILE" 2>/dev/null; then
-        # 使用Python脚本来修改文件，避免sed转义问题
-        python3 << 'PYTHON_SCRIPT'
+    
+    python3 << 'PYTHON_SCRIPT'
 import sys
+import re
 
 workspace_file = sys.argv[1]
 
 with open(workspace_file, 'r', encoding='utf-8') as f:
     content = f.read()
-
-# 旧的函数定义
-old_function = '''def _resolve_memory_class(backend: str) -> type:
-    """Return the memory manager class for the given backend name."""
-    from ...agents.memory import ReMeLightMemoryManager
-
-    if backend == "remelight":
-        return ReMeLightMemoryManager
-    raise ConfigurationException(
-        message=f"Unsupported memory manager backend: '{backend}'",
-    )'''
 
 # 新的函数定义
 new_function = '''def _resolve_memory_class(backend: str) -> type:
@@ -224,96 +183,28 @@ new_function = '''def _resolve_memory_class(backend: str) -> type:
     from ...agents.memory import ReMeLightMemoryManager
     try:
         from ...agents.tools.HumanThinkingMemoryManager.core.memory_manager import HumanThinkingMemoryManager
+        return HumanThinkingMemoryManager
     except ImportError:
-        HumanThinkingMemoryManager = None
-
+        pass
     if backend == "remelight":
         return ReMeLightMemoryManager
-    elif backend == "human_thinking" and HumanThinkingMemoryManager is not None:
-        return HumanThinkingMemoryManager
     raise ConfigurationException(
         message=f"Unsupported memory manager backend: '{backend}'",
     )'''
 
-if old_function in content:
-    content = content.replace(old_function, new_function)
+# 使用正则查找并替换
+pattern = r'def _resolve_memory_class\(backend: str\) -> type:.*?raise ConfigurationException\(.*?\)'
+match = re.search(pattern, content, re.DOTALL)
+
+if match:
+    content = content[:match.start()] + new_function + content[match.end():]
     with open(workspace_file, 'w', encoding='utf-8') as f:
         f.write(content)
-    print("   ✓ 成功添加 HumanThinkingMemoryManager 支持")
+    print("   ✓ 成功更新 workspace.py")
 else:
-    print("   ⚠ 未找到 _resolve_memory_class 函数，请手动检查")
+    print("   ⚠ 未找到 _resolve_memory_class 函数")
 PYTHON_SCRIPT
-        WORKSPACE_FILE="$WORKSPACE_FILE"
-        python3 "$WORKSPACE_FILE" 2>/dev/null || true
-    else
-        echo "   ⚠ 未找到 _resolve_memory_class 函数，请手动检查"
-    fi
-fi
-
-# 3. 检查 config.py 文件
-echo ""
-echo "3. 检查 config.py 文件..."
-
-CONFIG_FILE="$QwenPaw_PATH/src/qwenpaw/config/config.py"
-
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "   ⚠ config.py 不存在，跳过"
-else
-    # 检查是否已经添加 human_thinking 配置
-    if grep -q '"human_thinking":' "$CONFIG_FILE" 2>/dev/null; then
-        echo "   ✓ human_thinking 配置已经存在"
-    else
-        # 备份原文件
-        cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
-
-        # 使用Python脚本来修改文件
-        python3 << 'PYTHON_SCRIPT'
-import sys
-
-config_file = sys.argv[1]
-
-with open(config_file, 'r', encoding='utf-8') as f:
-    content = f.read()
-
-# 添加配置项
-config_addition = '''    "human_thinking": BuiltinToolConfig(
-        name="human_thinking",
-        enabled=True,
-        description="超级神经记忆系统+跨session碎片化记忆整合+神经元感知向量记忆检索架构",
-        icon="🧠",
-    ),'''
-
-# 在get_token_usage配置后添加
-marker = '"get_token_usage": BuiltinToolConfig('
-if marker in content:
-    # 找到 get_token_usage 配置块并在其后添加
-    idx = content.find(marker)
-    # 找到这个配置块的结束位置
-    search_start = idx
-    paren_count = 0
-    i = search_start
-    while i < len(content):
-        if content[i] == '(':
-            paren_count += 1
-        elif content[i] == ')':
-            paren_count -= 1
-            if paren_count == 0:
-                # 找到了配置块的结束
-                end_idx = i + 1
-                # 在这里插入新配置
-                content = content[:end_idx] + '\n        ' + config_addition + content[end_idx:]
-                break
-        i += 1
-
-    with open(config_file, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print("   ✓ 成功添加 human_thinking 配置")
-else:
-    print("   ⚠ 未找到 get_token_usage 配置，跳过")
-PYTHON_SCRIPT
-        CONFIG_FILE="$CONFIG_FILE"
-        python3 "$CONFIG_FILE" 2>/dev/null || true
-    fi
+    python3 - "$WORKSPACE_FILE"
 fi
 
 echo ""
@@ -321,14 +212,10 @@ echo "=========================================="
 echo "✓ 安装完成！"
 echo "=========================================="
 echo ""
-echo "Human Thinking Tool 已成功集成到 QwenPaw 中"
+echo "Human Thinking Memory Manager 已成功集成到 QwenPaw 中"
 echo ""
 echo "使用方法："
-echo "1. 在 QwenPaw 配置文件中设置:"
-echo "   memory_manager.backend = 'human_thinking'"
-echo ""
-echo "2. 或者在UI中选择 human_thinking 作为记忆后端"
-echo ""
-echo "3. 重启 QwenPaw 服务以应用更改"
+echo "1. 重启 QwenPaw 服务以应用更改"
+echo "2. 系统将自动使用 HumanThinkingMemoryManager"
 echo ""
 echo "=========================================="

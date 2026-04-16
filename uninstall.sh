@@ -116,75 +116,49 @@ fi
 echo ""
 echo "✓ QwenPaw根目录: $QwenPaw_PATH"
 
-# 1. 执行 Human Thinking Memory Manager 的禁用操作
+# 1. 从 workspace.py 中移除 HumanThinkingMemoryManager 支持
 echo ""
-echo "1. 执行 Human Thinking Memory Manager 禁用操作..."
-
-if [ -d "$SCRIPT_DIR" ]; then
-    echo "   执行禁用操作以恢复原始文件..."
-else
-    echo "   警告: HumanThinkingMemoryManager 目录不存在"
-fi
-
-# 2. 从 workspace.py 中移除 HumanThinkingMemoryManager 支持
-echo ""
-echo "2. 从 workspace.py 中移除 HumanThinkingMemoryManager 支持..."
+echo "1. 从 workspace.py 中移除 HumanThinkingMemoryManager 支持..."
 
 WORKSPACE_FILE="$QwenPaw_PATH/src/qwenpaw/app/workspace/workspace.py"
 
 if [ -f "$WORKSPACE_FILE" ]; then
-    # 检查是否已经包含HumanThinkingMemoryManager
     if grep -q "HumanThinkingMemoryManager" "$WORKSPACE_FILE" 2>/dev/null; then
-        # 备份原文件
         cp "$WORKSPACE_FILE" "${WORKSPACE_FILE}.bak"
 
         # 使用Python脚本来修改文件
         python3 << 'PYTHON_SCRIPT'
 import sys
+import re
 
 workspace_file = sys.argv[1]
 
 with open(workspace_file, 'r', encoding='utf-8') as f:
     content = f.read()
 
-# 当前的函数定义（包含HumanThinkingMemoryManager）
-old_function = '''def _resolve_memory_class(backend: str) -> type:
-    """Return the memory manager class for the given backend name."""
-    from ...agents.memory import ReMeLightMemoryManager
-    try:
-        from ...agents.tools.HumanThinkingMemoryManager.core.memory_manager import HumanThinkingMemoryManager
-    except ImportError:
-        HumanThinkingMemoryManager = None
-
-    if backend == "remelight":
-        return ReMeLightMemoryManager
-    elif backend == "human_thinking" and HumanThinkingMemoryManager is not None:
-        return HumanThinkingMemoryManager
-    raise ConfigurationException(
-        message=f"Unsupported memory manager backend: '{backend}'",
-    )'''
-
 # 原始的函数定义（不包含HumanThinkingMemoryManager）
 new_function = '''def _resolve_memory_class(backend: str) -> type:
     """Return the memory manager class for the given backend name."""
     from ...agents.memory import ReMeLightMemoryManager
-
     if backend == "remelight":
         return ReMeLightMemoryManager
     raise ConfigurationException(
         message=f"Unsupported memory manager backend: '{backend}'",
     )'''
 
-if old_function in content:
-    content = content.replace(old_function, new_function)
+# 使用正则查找并替换
+pattern = r'def _resolve_memory_class\(backend: str\) -> type:.*?raise ConfigurationException\(.*?\)'
+match = re.search(pattern, content, re.DOTALL)
+
+if match:
+    content = content[:match.start()] + new_function + content[match.end():]
     with open(workspace_file, 'w', encoding='utf-8') as f:
         f.write(content)
     print("   ✓ 成功从 workspace.py 中移除 HumanThinkingMemoryManager 支持")
 else:
-    print("   ⚠ 未找到 HumanThinkingMemoryManager 相关代码，可能已经被移除")
+    print("   ⚠ 未找到 _resolve_memory_class 函数")
 PYTHON_SCRIPT
-        WORKSPACE_FILE="$WORKSPACE_FILE"
-        python3 "$WORKSPACE_FILE" 2>/dev/null || true
+        python3 - "$WORKSPACE_FILE"
     else
         echo "   ✓ HumanThinkingMemoryManager 支持已经不存在"
     fi
@@ -192,88 +166,23 @@ else
     echo "   警告: workspace.py 文件不存在"
 fi
 
-# 3. 从 tools/__init__.py 中移除导入
+# 2. 删除 HumanThinkingMemoryManager 目录
 echo ""
-echo "3. 从 tools/__init__.py 中移除 HumanThinkingTool 导入..."
+echo "2. 删除 HumanThinkingMemoryManager 目录..."
 
-INIT_FILE="$QwenPaw_PATH/src/qwenpaw/agents/tools/__init__.py"
+TARGET_DIR="$QwenPaw_PATH/src/qwenpaw/agents/tools/HumanThinkingMemoryManager"
 
-if [ -f "$INIT_FILE" ]; then
-    if grep -q "HumanThinkingTool" "$INIT_FILE" 2>/dev/null; then
-        cp "$INIT_FILE" "${INIT_FILE}.bak"
-
-        # 移除导入行
-        sed -i '/from .HumanThinkingMemoryManager import/d' "$INIT_FILE"
-        sed -i '/"HumanThinkingTool"/d' "$INIT_FILE"
-        sed -i '/"get_tool"/d' "$INIT_FILE"
-
-        echo "   ✓ 成功从 tools/__init__.py 中移除导入"
+if [ -d "$TARGET_DIR" ]; then
+    # 检查是否是当前脚本所在目录
+    if [ "$SCRIPT_DIR" = "$TARGET_DIR" ]; then
+        echo "   ⚠ 警告: 正在从安装目录运行卸载脚本"
+        echo "   请先切换到其他目录后再运行卸载脚本，或手动删除目录"
     else
-        echo "   ✓ HumanThinkingTool 导入已经不存在"
+        rm -rf "$TARGET_DIR"
+        echo "   ✓ 已删除: $TARGET_DIR"
     fi
 else
-    echo "   警告: tools/__init__.py 文件不存在"
-fi
-
-# 4. 从 config.py 中移除配置
-echo ""
-echo "4. 从 config.py 中移除 human_thinking 配置..."
-
-CONFIG_FILE="$QwenPaw_PATH/src/qwenpaw/config/config.py"
-
-if [ -f "$CONFIG_FILE" ]; then
-    if grep -q '"human_thinking":' "$CONFIG_FILE" 2>/dev/null; then
-        cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
-
-        # 使用Python脚本移除配置块
-        python3 << 'PYTHON_SCRIPT'
-import sys
-
-config_file = sys.argv[1]
-
-with open(config_file, 'r', encoding='utf-8') as f:
-    content = f.read()
-
-# 找到并移除 human_thinking 配置块
-marker = '"human_thinking": BuiltinToolConfig('
-if marker in content:
-    idx = content.find(marker)
-    # 找到配置块的结束位置
-    search_start = idx
-    paren_count = 0
-    i = search_start
-    while i < len(content):
-        if content[i] == '(':
-            paren_count += 1
-        elif content[i] == ')':
-            paren_count -= 1
-            if paren_count == 0:
-                end_idx = i + 1
-                # 移除整个配置块（包括前面的逗号和空白）
-                # 向前查找逗号
-                j = idx - 1
-                while j >= 0 and content[j] in ' \t\n':
-                    j -= 1
-                if j >= 0 and content[j] == ',':
-                    idx = j
-                # 移除
-                content = content[:idx] + content[end_idx:]
-                break
-        i += 1
-
-    with open(config_file, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print("   ✓ 成功从 config.py 中移除 human_thinking 配置")
-else:
-    print("   ⚠ human_thinking 配置已经不存在")
-PYTHON_SCRIPT
-        CONFIG_FILE="$CONFIG_FILE"
-        python3 "$CONFIG_FILE" 2>/dev/null || true
-    else
-        echo "   ✓ human_thinking 配置已经不存在"
-    fi
-else
-    echo "   警告: config.py 文件不存在"
+    echo "   ✓ HumanThinkingMemoryManager 目录不存在"
 fi
 
 echo ""
@@ -281,7 +190,7 @@ echo "=========================================="
 echo "✓ 卸载完成！"
 echo "=========================================="
 echo ""
-echo "Human Thinking Tool 已成功从 QwenPaw 中移除"
+echo "Human Thinking Memory Manager 已成功从 QwenPaw 中移除"
 echo ""
 echo "如需重新安装，请运行:"
 echo "   bash install.sh"
