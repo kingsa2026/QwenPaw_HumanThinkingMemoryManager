@@ -239,11 +239,11 @@ if grep -q "HumanThinkingMemoryManager" "$WORKSPACE_FILE" 2>/dev/null; then
 else
     cp "$WORKSPACE_FILE" "${WORKSPACE_FILE}.bak"
     
-    python3 << 'PYTHON_SCRIPT'
-import sys
+    WORKSPACE_FILE="$WORKSPACE_FILE" python3 << 'PYTHON_SCRIPT'
+import os
 import re
 
-workspace_file = sys.argv[1]
+workspace_file = os.environ['WORKSPACE_FILE']
 
 with open(workspace_file, 'r', encoding='utf-8') as f:
     content = f.read()
@@ -296,11 +296,11 @@ if grep -q "human_thinking" "$CONFIG_FILE" 2>/dev/null; then
 else
     cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
     
-    python3 << 'PYTHON_SCRIPT'
-import sys
+    CONFIG_FILE="$CONFIG_FILE" python3 << 'PYTHON_SCRIPT'
+import os
 import re
 
-config_file = sys.argv[1]
+config_file = os.environ['CONFIG_FILE']
 
 with open(config_file, 'r', encoding='utf-8') as f:
     content = f.read()
@@ -322,7 +322,6 @@ if re.search(old_pattern, content):
 else:
     print("   ⚠ 未找到 memory_manager_backend 配置")
 PYTHON_SCRIPT
-    python3 - "$CONFIG_FILE"
 fi
 
 echo ""
