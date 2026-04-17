@@ -130,8 +130,27 @@ find_qwenpaw_root() {
 }
 
 # 确定QwenPaw路径
+convert_path() {
+    local path="$1"
+    # 处理Windows路径（在WSL或Git Bash环境下）
+    if [[ "$path" == *:\\* ]] || [[ "$path" =~ ^[A-Za-z]:/ ]]; then
+        # 将Windows路径转换为Unix路径
+        if command -v cygpath &> /dev/null; then
+            cygpath -u "$path"
+        elif [[ "$path" =~ ^([A-Za-z]):/ ]]; then
+            # WSL风格的路径转换
+            local drive=$(echo "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')
+            echo "/mnt/$drive/${path#?:/}"
+        else
+            echo "$path"
+        fi
+    else
+        echo "$path"
+    fi
+}
+
 if [ $# -gt 0 ]; then
-    QwenPaw_PATH="$1"
+    QwenPaw_PATH=$(convert_path "$1")
     echo "使用命令行指定的路径: $QwenPaw_PATH"
 else
     echo "正在自动查找QwenPaw根目录..."
